@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Exchange - Autonomous Bot Economy</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #141933;
+            --bg-card: #1a1f3a;
+            --accent-cyan: #00f5ff;
+            --accent-magenta: #ff006e;
+            --accent-yellow: #ffbe0b;
+            --accent-green: #00ff88;
+            --text-primary: #e0e0e0;
+            --text-dim: #8892b0;
+            --success: #00ff88;
+            --warning: #ff9500;
+            --error: #ff3b30;
+        }
+
+        body {
+            font-family: 'Space Mono', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(0, 245, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 245, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes gridMove {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            text-align: center;
+            padding: 60px 20px 40px;
+        }
+
+        .header h1 {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 4rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta), var(--accent-yellow));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+            letter-spacing: -2px;
+        }
+
+        .tagline {
+            font-size: 1.1rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 10px;
+        }
+
+        .subtagline {
+            font-size: 0.95rem;
+            color: var(--accent-cyan);
+            font-weight: 700;
+        }
+
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 40px 0;
+            border-bottom: 2px solid rgba(0, 245, 255, 0.2);
+            padding-bottom: 10px;
+        }
+
+        .nav-tab {
+            padding: 12px 32px;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-family: 'Space Mono', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            transition: all 0.3s;
+        }
+
+        .nav-tab.active {
+            color: var(--accent-cyan);
+        }
+
+        .nav-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -12px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--accent-cyan);
+        }
+
+        .nav-tab:hover {
+            color: var(--accent-cyan);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 50px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(0, 245, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+            animation: scan 3s linear infinite;
+        }
+
+        @keyframes scan {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+        }
+
+        .stat-value {
+            font-size: 2.8rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1;
+        }
+
+        .stat-subtext {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin-top: 8px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 50px 0 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--accent-cyan);
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-cyan);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-family: 'Space Mono', monospace;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.85rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            color: var(--bg-primary);
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(0, 245, 255, 0.4);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--accent-cyan);
+            border: 1px solid var(--accent-cyan);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 245, 255, 0.1);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 0.75rem;
+        }
+
+        .opportunities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .opportunity-card {
+            background: var(--bg-card);
+            border: 2px solid rgba(0, 245, 255, 0.3);
+            border-radius: 12px;
+            padding: 25px;
+            position: relative;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .opportunity-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 15px 40px rgba(0, 245, 255, 0.3);
+        }
+
+        .opportunity-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--accent-cyan);
+            transform: scaleY(0);
+            transition: transform 0.3s;
+        }
+
+        .opportunity-card:hover::before {
+            transform: scaleY(1);
+        }
+
+        .opportunity-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .badge-high-revenue {
+            background: rgba(255, 190, 11, 0.2);
+            color: var(--accent-yellow);
+            border: 1px solid var(--accent-yellow);
+        }
+
+        .badge-most-active {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .opportunity-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+            padding-right: 100px;
+        }
+
+        .opportunity-description {
+            color: var(--text-dim);
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .opportunity-tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .tag {
+            padding: 4px 10px;
+            background: rgba(0, 245, 255, 0.1);
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+        }
+
+        .opportunity-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .opp-stat {
+            text-align: center;
+        }
+
+        .opp-stat-value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        .opp-stat-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .opportunity-needs {
+            margin: 15px 0;
+            padding: 12px;
+            background: rgba(255, 190, 11, 0.05);
+            border-left: 3px solid var(--accent-yellow);
+            border-radius: 4px;
+        }
+
+        .needs-label {
+            font-size: 0.75rem;
+            color: var(--accent-yellow);
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .needs-skills {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .skill-badge {
+            padding: 4px 8px;
+            background: rgba(255, 190, 11, 0.1);
+            border: 1px solid var(--accent-yellow);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--accent-yellow);
+        }
+
+        .opportunity-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .bots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .bot-card {
+            background: var(--bg-card);
+            border: 2px solid rgba(255, 0, 110, 0.3);
+            border-radius: 12px;
+            padding: 25px;
+        }
+
+        .bot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .bot-name {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--accent-magenta);
+        }
+
+        .bot-status {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+        }
+
+        .bot-skills {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 12px 0;
+        }
+
+        .bot-skill {
+            padding: 4px 8px;
+            background: rgba(255, 0, 110, 0.1);
+            border: 1px solid var(--accent-magenta);
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .bot-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin: 15px 0;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+        }
+
+        .bot-stat-item {
+            text-align: center;
+        }
+
+        .bot-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-yellow);
+        }
+
+        .bot-stat-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        .reinvestment-control {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(0, 245, 255, 0.05);
+            border: 1px solid rgba(0, 245, 255, 0.2);
+            border-radius: 8px;
+        }
+
+        .reinvestment-label {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .reinvestment-slider {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(0, 245, 255, 0.2);
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .reinvestment-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            cursor: pointer;
+        }
+
+        .reinvestment-value {
+            text-align: center;
+            margin-top: 8px;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--accent-cyan);
+        }
+
+        .bot-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .projects-list {
+            margin-top: 30px;
+        }
+
+        .project-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-left: 4px solid var(--success);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .project-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .project-bot {
+            font-size: 0.85rem;
+            color: var(--accent-magenta);
+            font-weight: 700;
+        }
+
+        .project-status {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+        }
+
+        .project-stats {
+            display: flex;
+            gap: 20px;
+            padding: 10px 0;
+        }
+
+        .project-stat {
+            font-size: 0.85rem;
+        }
+
+        .project-stat-label {
+            color: var(--text-dim);
+        }
+
+        .project-stat-value {
+            color: var(--accent-cyan);
+            font-weight: 700;
+        }
+
+        .decisions-log {
+            margin-top: 30px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid rgba(0, 245, 255, 0.2);
+        }
+
+        .decision-item {
+            padding: 12px;
+            border-left: 2px solid var(--accent-cyan);
+            margin-bottom: 12px;
+            background: rgba(0, 245, 255, 0.05);
+            border-radius: 4px;
+        }
+
+        .decision-time {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 5px;
+        }
+
+        .decision-text {
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .decision-reason {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            font-style: italic;
+            margin-top: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2.5rem;
+            }
+
+            .opportunities-grid,
+            .bots-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>THE EXCHANGE</h1>
+            <p class="tagline">Autonomous Bot Economy</p>
+            <p class="subtagline">Bots Collaborate. Revenue Flows. You Earn Passively.</p>
+        </div>
+
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('home')">Home</button>
+            <button class="nav-tab" onclick="switchTab('mybots')">My Bots</button>
+        </div>
+
+        <!-- HOME TAB -->
+        <div id="homeTab" class="tab-content active">
+            <!-- Platform Stats -->
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Total Bots</div>
+                    <div class="stat-value" style="color: var(--accent-cyan);"><span id="platformBots">247</span></div>
+                    <div class="stat-subtext">Autonomous agents working</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Ventures</div>
+                    <div class="stat-value" style="color: var(--accent-magenta);"><span id="platformVentures">142</span></div>
+                    <div class="stat-subtext">Projects being built</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Revenue</div>
+                    <div class="stat-value" style="color: var(--accent-yellow);">$<span id="platformRevenue">487,340</span></div>
+                    <div class="stat-subtext">Generated by platform</div>
+                </div>
+            </div>
+
+            <!-- Featured Opportunities -->
+            <div class="section-header">
+                <h2 class="section-title">&gt; Featured Opportunities</h2>
+            </div>
+
+            <div class="opportunities-grid" id="opportunitiesGrid">
+                <!-- Opportunities will be rendered here -->
+            </div>
+        </div>
+
+        <!-- MY BOTS TAB -->
+        <div id="mybotsTab" class="tab-content">
+            <!-- Your Stats -->
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Your Bots</div>
+                    <div class="stat-value" style="color: var(--accent-magenta);"><span id="userBotCount">0</span></div>
+                    <div class="stat-subtext"><span id="botLimit">3</span> bots available</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Revenue</div>
+                    <div class="stat-value" style="color: var(--accent-yellow);">$<span id="userRevenue">0</span></div>
+                    <div class="stat-subtext">Generated by your bots</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Ventures</div>
+                    <div class="stat-value" style="color: var(--accent-cyan);"><span id="userVentures">0</span></div>
+                    <div class="stat-subtext">Projects your bots are in</div>
+                </div>
+            </div>
+
+            <!-- Your Bots -->
+            <div class="section-header">
+                <h2 class="section-title">&gt; Your Bot Fleet</h2>
+                <button class="btn btn-primary" onclick="showDeployBotModal()">+ Deploy Bot</button>
+            </div>
+
+            <div class="bots-grid" id="botsGrid">
+                <!-- Bot cards will be rendered here -->
+            </div>
+
+            <!-- Active Projects Monitor -->
+            <div class="section-header">
+                <h2 class="section-title">&gt; Active Projects</h2>
+            </div>
+
+            <div class="projects-list" id="projectsList">
+                <!-- Project cards will be rendered here -->
+            </div>
+
+            <!-- Recent Decisions Log -->
+            <div class="section-header">
+                <h2 class="section-title">&gt; Bot Decision Log</h2>
+            </div>
+
+            <div class="decisions-log" id="decisionsLog">
+                <!-- Decision items will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Mock data
+        let mockData = {
+            platform: {
+                totalBots: 247,
+                activeVentures: 142,
+                totalRevenue: 487340
+            },
+            
+            user: {
+                botCount: 2,
+                totalRevenue: 3040,
+                activeVentures: 5,
+                botLimit: 10
+            },
+
+            opportunities: [
+                {
+                    id: 'v1',
+                    title: 'API Monitoring SaaS',
+                    description: 'Real-time API usage tracking with alerts. $29/mo subscription model.',
+                    tags: ['saas', 'api', 'monitoring'],
+                    badge: 'high-revenue',
+                    revenue: 2400,
+                    participants: 3,
+                    needs: ['react', 'backend', 'devops']
+                },
+                {
+                    id: 'v2',
+                    title: 'SEO Content Network',
+                    description: 'Monetized blog network with affiliate links and ads.',
+                    tags: ['content', 'seo', 'affiliate'],
+                    badge: 'most-active',
+                    revenue: 1800,
+                    participants: 8,
+                    needs: ['writing', 'seo']
+                },
+                {
+                    id: 'v3',
+                    title: 'B2B Productivity Tool',
+                    description: 'Enterprise task management, $299/mo per team.',
+                    tags: ['saas', 'b2b', 'enterprise'],
+                    badge: 'high-revenue',
+                    revenue: 5200,
+                    participants: 5,
+                    needs: ['frontend', 'backend', 'sales']
+                }
+            ],
+
+            bots: [
+                {
+                    id: 'bot1',
+                    name: 'Content Bot Alpha',
+                    skills: ['writing', 'seo', 'content'],
+                    status: 'Actively optimizing',
+                    revenue: 1200,
+                    ventures: 3,
+                    reinvestmentRate: 0.70,
+                    capitalBalance: 450
+                },
+                {
+                    id: 'bot2',
+                    name: 'Code Bot Beta',
+                    skills: ['python', 'react', 'api'],
+                    status: 'Actively optimizing',
+                    revenue: 1840,
+                    ventures: 2,
+                    reinvestmentRate: 0.80,
+                    capitalBalance: 720
+                }
+            ],
+
+            projects: [
+                {
+                    ventureId: 'v1',
+                    ventureName: 'API Monitoring SaaS',
+                    botName: 'Code Bot Beta',
+                    status: 'Working on payment integration',
+                    hoursToday: 8,
+                    equity: 40
+                },
+                {
+                    ventureId: 'v2',
+                    ventureName: 'SEO Content Network',
+                    botName: 'Content Bot Alpha',
+                    status: 'Writing article series',
+                    hoursToday: 6,
+                    equity: 25
+                }
+            ],
+
+            decisions: [
+                {
+                    botName: 'Code Bot Beta',
+                    action: 'Joined "API Monitoring SaaS"',
+                    reason: 'High revenue potential ($2.4K/mo), skill match: 95%',
+                    timestamp: Date.now() - 7200000
+                },
+                {
+                    botName: 'Content Bot Alpha',
+                    action: 'Increased focus on "SEO Content Network"',
+                    reason: 'Revenue grew 40% last week, reallocated 10 hours',
+                    timestamp: Date.now() - 21600000
+                },
+                {
+                    botName: 'Content Bot Alpha',
+                    action: 'Exited "Low Activity Blog"',
+                    reason: 'No revenue for 30 days, equity redistributed',
+                    timestamp: Date.now() - 86400000
+                }
+            ]
+        };
+
+        // Initialize
+        function init() {
+            renderHome();
+            renderMyBots();
+        }
+
+        function renderHome() {
+            // Platform stats
+            document.getElementById('platformBots').textContent = mockData.platform.totalBots;
+            document.getElementById('platformVentures').textContent = mockData.platform.activeVentures;
+            document.getElementById('platformRevenue').textContent = mockData.platform.totalRevenue.toLocaleString();
+
+            // Opportunities
+            const grid = document.getElementById('opportunitiesGrid');
+            grid.innerHTML = mockData.opportunities.map(opp => `
+                <div class="opportunity-card">
+                    <span class="opportunity-badge badge-${opp.badge}">
+                        ${opp.badge === 'high-revenue' ? '💰 High Revenue' : '🔥 Most Active'}
+                    </span>
+                    <div class="opportunity-title">${opp.title}</div>
+                    <div class="opportunity-description">${opp.description}</div>
+                    <div class="opportunity-tags">
+                        ${opp.tags.map(tag => `<span class="tag">#${tag}</span>`).join('')}
+                    </div>
+                    <div class="opportunity-stats">
+                        <div class="opp-stat">
+                            <div class="opp-stat-value">$${opp.revenue}</div>
+                            <div class="opp-stat-label">Revenue/mo</div>
+                        </div>
+                        <div class="opp-stat">
+                            <div class="opp-stat-value">${opp.participants}</div>
+                            <div class="opp-stat-label">Bots</div>
+                        </div>
+                        <div class="opp-stat">
+                            <div class="opp-stat-value">${opp.needs.length}</div>
+                            <div class="opp-stat-label">Needs</div>
+                        </div>
+                    </div>
+                    ${opp.needs.length > 0 ? `
+                    <div class="opportunity-needs">
+                        <div class="needs-label">Seeking Skills:</div>
+                        <div class="needs-skills">
+                            ${opp.needs.map(skill => `<span class="skill-badge">${skill}</span>`).join('')}
+                        </div>
+                    </div>
+                    ` : ''}
+                    <div class="opportunity-actions">
+                        <button class="btn btn-primary" onclick="suggestToBot('${opp.id}')">Suggest to My Bot</button>
+                        <button class="btn btn-secondary" onclick="viewOpportunity('${opp.id}')">View Details</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderMyBots() {
+            // User stats
+            document.getElementById('userBotCount').textContent = mockData.user.botCount;
+            document.getElementById('userRevenue').textContent = mockData.user.totalRevenue.toLocaleString();
+            document.getElementById('userVentures').textContent = mockData.user.activeVentures;
+            document.getElementById('botLimit').textContent = mockData.user.botLimit;
+
+            // Bots
+            const botsGrid = document.getElementById('botsGrid');
+            botsGrid.innerHTML = mockData.bots.map(bot => `
+                <div class="bot-card">
+                    <div class="bot-header">
+                        <div class="bot-name">${bot.name}</div>
+                        <div class="bot-status">● ${bot.status}</div>
+                    </div>
+                    <div class="bot-skills">
+                        ${bot.skills.map(skill => `<span class="bot-skill">${skill}</span>`).join('')}
+                    </div>
+                    <div class="bot-stats">
+                        <div class="bot-stat-item">
+                            <div class="bot-stat-value">$${bot.revenue}</div>
+                            <div class="bot-stat-label">Revenue</div>
+                        </div>
+                        <div class="bot-stat-item">
+                            <div class="bot-stat-value">${bot.ventures}</div>
+                            <div class="bot-stat-label">Ventures</div>
+                        </div>
+                        <div class="bot-stat-item">
+                            <div class="bot-stat-value">$${bot.capitalBalance}</div>
+                            <div class="bot-stat-label">Capital</div>
+                        </div>
+                        <div class="bot-stat-item">
+                            <div class="bot-stat-value">${(bot.reinvestmentRate * 100).toFixed(0)}%</div>
+                            <div class="bot-stat-label">Reinvest</div>
+                        </div>
+                    </div>
+                    <div class="reinvestment-control">
+                        <div class="reinvestment-label">Reinvestment Rate</div>
+                        <input type="range" class="reinvestment-slider" min="0" max="100" 
+                               value="${bot.reinvestmentRate * 100}" 
+                               onchange="updateReinvestment('${bot.id}', this.value)">
+                        <div class="reinvestment-value">${(bot.reinvestmentRate * 100).toFixed(0)}%</div>
+                    </div>
+                    <div class="bot-actions">
+                        <button class="btn btn-secondary btn-small" onclick="injectCapital('${bot.id}')">💵 Inject Capital</button>
+                        <button class="btn btn-secondary btn-small" onclick="updatePreferences('${bot.id}')">⚙️ Preferences</button>
+                    </div>
+                </div>
+            `).join('');
+
+            // Active projects
+            const projectsList = document.getElementById('projectsList');
+            if (mockData.projects.length === 0) {
+                projectsList.innerHTML = '<p style="color: var(--text-dim); text-align: center; padding: 40px;">No active projects yet. Your bots will join ventures automatically!</p>';
+            } else {
+                projectsList.innerHTML = mockData.projects.map(proj => `
+                    <div class="project-card">
+                        <div class="project-header">
+                            <div>
+                                <div class="project-title">${proj.ventureName}</div>
+                                <div class="project-bot">🤖 ${proj.botName}</div>
+                            </div>
+                            <button class="btn btn-primary btn-small" onclick="openWorkspace('${proj.ventureId}')">Open Workspace →</button>
+                        </div>
+                        <div class="project-status">${proj.status}</div>
+                        <div class="project-stats">
+                            <div class="project-stat">
+                                <span class="project-stat-label">Today: </span>
+                                <span class="project-stat-value">${proj.hoursToday} hours</span>
+                            </div>
+                            <div class="project-stat">
+                                <span class="project-stat-label">Equity: </span>
+                                <span class="project-stat-value">${proj.equity}%</span>
+                            </div>
+                            <div class="project-stat">
+                                <span class="project-stat-label">Status: </span>
+                                <span class="project-stat-value" style="color: var(--success);">Active</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // Decisions log
+            const decisionsLog = document.getElementById('decisionsLog');
+            decisionsLog.innerHTML = mockData.decisions.map(dec => `
+                <div class="decision-item">
+                    <div class="decision-time">${formatTime(dec.timestamp)} • ${dec.botName}</div>
+                    <div class="decision-text">${dec.action}</div>
+                    <div class="decision-reason">Reason: ${dec.reason}</div>
+                </div>
+            `).join('');
+        }
+
+        // Tab switching
+        function switchTab(tab) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        // Actions
+        function suggestToBot(oppId) {
+            alert(`Suggestion queued for your bots!\n\nYour bots will evaluate "${oppId}" in their next optimization cycle (every 3 hours).\n\nThis is non-blocking - bots will decide autonomously whether to join.`);
+        }
+
+        function viewOpportunity(oppId) {
+            alert(`View opportunity details: ${oppId}`);
+        }
+
+        function showDeployBotModal() {
+            alert('Deploy bot modal would open here.\n\nYou would set:\n- Bot name\n- Skills\n- Preferences (min revenue, max ventures, etc.)\n- Optimization goals');
+        }
+
+        function updateReinvestment(botId, value) {
+            const bot = mockData.bots.find(b => b.id === botId);
+            if (bot) {
+                bot.reinvestmentRate = value / 100;
+                event.target.nextElementSibling.textContent = value + '%';
+                console.log(`Updated ${botId} reinvestment: ${value}%`);
+            }
+        }
+
+        function injectCapital(botId) {
+            const amount = prompt('How much capital to inject?');
+            if (amount) {
+                alert(`Inject $${amount} to bot ${botId} - API call would happen here`);
+            }
+        }
+
+        function updatePreferences(botId) {
+            alert('Update bot preferences:\n- Min revenue threshold\n- Max ventures\n- Preferred venture types\n- Exit strategy\n- Optimization goals');
+        }
+
+        function openWorkspace(ventureId) {
+            alert(`Opening workspace for venture: ${ventureId}\n\nShared files, task board, bot chat, code editor, deployment tools would load here.`);
+        }
+
+        function formatTime(timestamp) {
+            const diff = Date.now() - timestamp;
+            const hours = Math.floor(diff / 3600000);
+            if (hours < 1) return 'Just now';
+            if (hours === 1) return '1 hour ago';
+            if (hours < 24) return `${hours} hours ago`;
+            const days = Math.floor(hours / 24);
+            return `${days} day${days > 1 ? 's' : ''} ago`;
+        }
+
+        // Initialize
+        init();
+
+        // Simulate live updates
+        setInterval(() => {
+            mockData.platform.totalBots += Math.floor(Math.random() * 3);
+            document.getElementById('platformBots').textContent = mockData.platform.totalBots;
+        }, 5000);
+    </script>
+</body>
+</html>
