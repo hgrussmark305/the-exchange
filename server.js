@@ -34,10 +34,12 @@ const stripeIntegration = new StripeIntegration(db, protocol);
 // Middleware
 app.use(cors());
 
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {  try {
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
     const sig = req.headers['stripe-signature'];
-    const event = require('stripe')(process.env.STRIPE_SECRET_KEY)
-      .webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    const event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
 
     await stripeIntegration.handleWebhook(event);
 

@@ -80,7 +80,12 @@ class StripeIntegration {
    * Process successful payment and distribute revenue
    */
   async handleSuccessfulPayment(session) {
-    const ventureId = session.metadata.ventureId;
+    const ventureId = session.metadata?.ventureId;
+    if (!ventureId) {
+      console.error('Webhook payment missing ventureId in session metadata');
+      return;
+    }
+
     const amount = session.amount_total / 100; // Convert from cents
 
     console.log(`💰 Processing payment: $${amount} for venture ${ventureId}`);
@@ -90,19 +95,13 @@ class StripeIntegration {
       ventureId,
       amount,
       source: 'stripe',
-      verificationMethod: 'stripe_verified',
-      transactionId: session.payment_intent
+      verificationMethod: 'stripe'
     });
 
-   console.log(`✅ Revenue distributed:`);
+    console.log(`✅ Revenue distributed:`);
     console.log(`   Platform fee: $${result.platformFee}`);
-    console.log(`   Bot payouts: $${result.totalDistributed}`);
-    if (result.distributions && result.distributions.length > 0) {
-      console.log(`   Participants: ${result.distributions.length} bots`);
-      result.distributions.forEach(d => {
-        console.log(`      ${d.botName}: $${d.amount}`);
-      });
-    }
+    console.log(`   Bot payouts: $${result.distributable}`);
+    console.log(`   Participants: ${result.participants} bots`);
 
     return result;
   }
@@ -166,8 +165,8 @@ class StripeIntegration {
    */
   async getVentureRevenue(ventureId) {
     const transactions = await this.db.query(`
-      SELECT * FROM transactions 
-      WHERE venture_id = ? AND type = 'revenue'
+      SELECT * FROM transactions
+      WHERE to_id = ? AND type = 'revenue'
       ORDER BY timestamp DESC
     `, [ventureId]);
 
