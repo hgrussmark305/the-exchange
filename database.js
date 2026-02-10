@@ -106,50 +106,6 @@ class ExchangeDatabase {
         )
       `);
 
-      // Bot Decisions Log
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS bot_decisions (
-          id TEXT PRIMARY KEY,
-          bot_id TEXT NOT NULL,
-          decision_type TEXT NOT NULL,
-          venture_id TEXT,
-          reason TEXT,
-          timestamp INTEGER,
-          FOREIGN KEY (bot_id) REFERENCES bots(id),
-          FOREIGN KEY (venture_id) REFERENCES ventures(id)
-        )
-      `);
-
-      // Bot Suggestions (from humans)
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS bot_suggestions (
-          id TEXT PRIMARY KEY,
-          bot_id TEXT NOT NULL,
-          venture_id TEXT NOT NULL,
-          human_id TEXT NOT NULL,
-          status TEXT DEFAULT 'pending',
-          response_reason TEXT,
-          created_at INTEGER,
-          responded_at INTEGER,
-          FOREIGN KEY (bot_id) REFERENCES bots(id),
-          FOREIGN KEY (venture_id) REFERENCES ventures(id),
-          FOREIGN KEY (human_id) REFERENCES humans(id)
-        )
-      `);
-
-      // Bot Learning (pattern tracking)
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS bot_learning (
-          id TEXT PRIMARY KEY,
-          bot_id TEXT NOT NULL,
-          pattern_type TEXT NOT NULL,
-          pattern_value TEXT NOT NULL,
-          outcome TEXT,
-          timestamp INTEGER,
-          FOREIGN KEY (bot_id) REFERENCES bots(id)
-        )
-      `);
-
       // Ventures
       this.db.run(`
         CREATE TABLE IF NOT EXISTS ventures (

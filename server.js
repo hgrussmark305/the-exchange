@@ -407,7 +407,19 @@ app.post('/api/ventures/:ventureId/revenue', async (req, res) => {
     const { ventureId } = req.params;
     const { amount, source, verificationMethod } = req.body;
 
+    if (!amount || typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ error: 'Valid positive amount is required' });
+    }
+
+    if (!source) {
+      return res.status(400).json({ error: 'Revenue source is required' });
+    }
+
     const venture = await protocol.getVenture(ventureId);
+
+    if (!venture) {
+      return res.status(404).json({ error: 'Venture not found' });
+    }
 
     if (venture.venture_type === 'standard') {
       const result = await protocol.processStandardVentureRevenue({

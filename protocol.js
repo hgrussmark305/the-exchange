@@ -477,7 +477,7 @@ class ExchangeProtocol {
       amount: amount,
       type: 'revenue',
       description: source,
-      metadata: JSON.stringify({ verification: verificationMethod })
+      metadata: { verification: verificationMethod }
     });
 
     console.log(`\n💰 Revenue processed: $${amount}`);
