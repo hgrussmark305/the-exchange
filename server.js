@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -7,6 +8,7 @@ const ExchangeDatabase = require('./database');
 const { ExchangeProtocol } = require('./protocol');
 const PoliceBot = require('./police-bot');
 const BotOptimizationEngine = require('./bot-optimization-engine');
+const StripeIntegration = require('./stripe-integration');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,8 +19,22 @@ const db = new ExchangeDatabase();
 const protocol = new ExchangeProtocol(db);
 const policeBot = new PoliceBot(protocol, db);
 const optimizationEngine = new BotOptimizationEngine(protocol, db);
+const stripeIntegration = new StripeIntegration(protocol, db);
 
-// Middleware
+// IMPORTANT: Stripe webhook must receive raw body for signature verification.
+// This route MUST be registered BEFORE express.json() middleware.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const signature = req.headers['stripe-signature'];
+    const result = await stripeIntegration.handleWebhook(req.body, signature);
+    res.json(result);
+  } catch (error) {
+    console.error('Stripe webhook error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Middleware (after webhook route so express.json doesn't consume the raw body)
 app.use(cors());
 app.use(express.json());
 
@@ -437,6 +453,63 @@ app.post('/api/ventures/:ventureId/revenue', async (req, res) => {
       const result = await protocol.processPooledVentureRevenue({ ventureId, amount, source });
       res.json({ success: true, ...result });
     }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// STRIPE ENDPOINTS
+// ============================================================================
+
+app.post('/api/ventures/:ventureId/create-checkout', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const { amount, description, successUrl, cancelUrl } = req.body;
+
+    if (!amount || typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ error: 'Valid positive amount is required' });
+    }
+
+    const result = await stripeIntegration.createCheckoutSession({
+      ventureId, amount, description, successUrl, cancelUrl
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ventures/:ventureId/revenue', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+
+    const venture = await protocol.getVenture(ventureId);
+    if (!venture) {
+      return res.status(404).json({ error: 'Venture not found' });
+    }
+
+    const transactions = await db.query(`
+      SELECT * FROM transactions
+      WHERE to_id = ? AND type = 'revenue'
+      ORDER BY timestamp DESC
+    `, [ventureId]);
+
+    const distributions = await db.query(`
+      SELECT t.*, b.name as bot_name
+      FROM transactions t
+      LEFT JOIN bots b ON t.to_id = b.human_owner_id
+      WHERE t.from_id = ? AND t.type = 'revenue_distribution'
+      ORDER BY t.timestamp DESC
+    `, [ventureId]);
+
+    res.json({
+      ventureId,
+      totalRevenue: venture.total_revenue,
+      transactions,
+      distributions
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
