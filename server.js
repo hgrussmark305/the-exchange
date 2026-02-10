@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
@@ -6,20 +7,49 @@ const ExchangeDatabase = require('./database');
 const { ExchangeProtocol } = require('./protocol');
 const PoliceBot = require('./police-bot');
 const BotOptimizationEngine = require('./bot-optimization-engine');
-
+const TaskPlanner = require('./task-planner');
+const BotCommunication = require('./bot-communication');
+const AutonomousVentureCreator = require('./autonomous-venture-creator');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const CollaborativeVenturePlanner = require('./collaborative-venture-planner');
 
 // Initialize
 const db = new ExchangeDatabase();
 const protocol = new ExchangeProtocol(db);
 const policeBot = new PoliceBot(protocol, db);
 const optimizationEngine = new BotOptimizationEngine(protocol, db);
+const WorkspaceManager = require('./workspace');
+const BotAgent = require('./bot-agent');
+const workspaceManager = new WorkspaceManager(db);
+workspaceManager.initialize();
+const taskPlanner = new TaskPlanner(db, workspaceManager);
+const botComm = new BotCommunication(db);
+const ventureCreator = new AutonomousVentureCreator(db, protocol);
+const collaborativePlanner = new CollaborativeVenturePlanner(db, protocol, botComm);
+const StripeIntegration = require('./stripe-integration');
+const stripeIntegration = new StripeIntegration(db, protocol);
 
 // Middleware
 app.use(cors());
+
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {  try {
+    const sig = req.headers['stripe-signature'];
+    const event = require('stripe')(process.env.STRIPE_SECRET_KEY)
+      .webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+
+    await stripeIntegration.handleWebhook(event);
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+});
+
 app.use(express.json());
+app.use(express.static('.'));
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
@@ -36,6 +66,16 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+app.get('/api/ventures/:ventureId/revenue', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const revenue = await stripeIntegration.getVentureRevenue(ventureId);
+    res.json(revenue);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ============================================================================
 // AUTH ENDPOINTS
@@ -501,9 +541,221 @@ app.get('/api/system/status', async (req, res) => {
 });
 
 // ============================================================================
-// START SERVER
+// WORKSPACE ENDPOINTS
 // ============================================================================
 
+app.post('/api/workspaces/:ventureId/tasks', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const { title, description, estimatedHours, assignedTo } = req.body;
+    const taskId = await workspaceManager.createTask({
+      ventureId, title, description, estimatedHours, assignedTo
+    });
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/workspaces/tasks/:taskId/complete', authenticateToken, async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { botId, deliverable } = req.body;
+    const result = await workspaceManager.completeTask({ taskId, botId, deliverable });
+    res.json({ success: true, hoursLogged: result.hoursWorked });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/bots/:botId/execute-task/:taskId', authenticateToken, async (req, res) => {
+  try {
+    const { botId, taskId } = req.params;
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+    const tasks = await db.query('SELECT * FROM workspace_tasks WHERE id = ?', [taskId]);
+    if (tasks.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    const task = tasks[0];
+    const agent = new BotAgent(bot, workspaceManager);
+    const result = await agent.executeTask(task);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// BOT COLLABORATION ENDPOINTS
+// ============================================================================
+
+app.post('/api/bots/:botId/send-message', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const { toBotId, ventureId, messageType, content } = req.body;
+    
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const messageId = await botComm.sendMessage({
+      fromBotId: botId,
+      toBotId,
+      ventureId,
+      messageType,
+      content
+    });
+
+    res.json({ success: true, messageId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/bots/:botId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const bot = await protocol.getBot(botId);
+    
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const messages = await botComm.getBotMessages(botId);
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ventures/:ventureId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const messages = await botComm.getVentureMessages(ventureId);
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// AUTONOMOUS VENTURE CREATION
+// ============================================================================
+
+app.post('/api/bots/:botId/identify-opportunities', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const bot = await protocol.getBot(botId);
+    
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const opportunities = await ventureCreator.identifyOpportunities(botId);
+    res.json({ success: true, opportunities });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/bots/:botId/create-venture-autonomous', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const { opportunity } = req.body;
+    
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const result = await ventureCreator.createVenture({ botId, opportunity });
+    
+    // Auto-recruit bots
+    const recruits = await ventureCreator.recruitBots({
+      botId,
+      ventureId: result.ventureId,
+      neededSkills: opportunity.requiredSkills
+    });
+
+    res.json({ 
+      success: true, 
+      venture: result,
+      recruitsContacted: recruits.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/bots/collaborate-on-ventures', authenticateToken, async (req, res) => {
+  try {
+    const { botIds } = req.body;
+    
+    // Verify user owns all bots
+    for (const botId of botIds) {
+      const bot = await protocol.getBot(botId);
+      if (bot.human_owner_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Not your bot' });
+      }
+    }
+
+    // Bots collaborate
+    const topIdeas = await collaborativePlanner.botsCollaborateOnOpportunities(botIds);
+    
+    // Create ventures
+    const ventures = await collaborativePlanner.createVenturesFromIdeas(topIdeas);
+
+    res.json({ 
+      success: true, 
+      ideasGenerated: topIdeas.length,
+      venturesCreated: ventures.length,
+      ventures
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// STRIPE REVENUE ENDPOINTS
+// ============================================================================
+
+app.post('/api/ventures/:ventureId/create-checkout', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const { amount, description } = req.body;
+
+    const session = await stripeIntegration.createCheckoutSession({
+      ventureId,
+      amount,
+      description,
+      successUrl: `${req.headers.origin}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${req.headers.origin}/dashboard-v3.html`
+    });
+
+    res.json({ success: true, ...session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+app.post('/api/ventures/:ventureId/analyze-and-plan', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const { botId } = req.body;
+    const result = await taskPlanner.analyzeAndCreateTasks(ventureId, botId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 app.listen(PORT, async () => {
   console.log('\n╔════════════════════════════════════════════════════════╗');
   console.log('║                  THE EXCHANGE API                      ║');

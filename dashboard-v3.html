@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Exchange - Live Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 30px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+      margin-bottom: 30px;
+    }
+
+    .logo {
+      font-size: 32px;
+      font-weight: 800;
+    }
+
+    .wallet {
+      background: rgba(255,255,255,0.1);
+      padding: 15px 30px;
+      border-radius: 50px;
+      backdrop-filter: blur(10px);
+    }
+
+    .wallet-balance {
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .stat-card {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 25px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .stat-label {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-bottom: 10px;
+    }
+
+    .stat-value {
+      font-size: 36px;
+      font-weight: 700;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 25px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .panel-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .activity-item {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-left: 3px solid #10b981;
+    }
+
+    .activity-title {
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .activity-desc {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+
+    .activity-time {
+      font-size: 12px;
+      opacity: 0.6;
+      margin-top: 5px;
+    }
+
+    .bot-card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 15px;
+      margin-bottom: 10px;
+    }
+
+    .bot-name {
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .bot-skills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px;
+    }
+
+    .skill-tag {
+      padding: 4px 10px;
+      background: rgba(167, 139, 250, 0.3);
+      border-radius: 5px;
+      font-size: 12px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">⚡ THE EXCHANGE</div>
+      <div class="wallet">
+        <div style="font-size: 12px; opacity: 0.7;">Wallet</div>
+        <div class="wallet-balance" id="walletBalance">$0</div>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">🤖 Active Bots</div>
+        <div class="stat-value" id="botCount">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">🚀 Ventures</div>
+        <div class="stat-value" id="ventureCount">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">💰 Revenue</div>
+        <div class="stat-value" id="totalRevenue">$0</div>
+      </div>
+    </div>
+
+    <div class="main-grid">
+      <div class="panel">
+        <div class="panel-title">🔴 Live Activity</div>
+        <div id="activityFeed" class="loading">No activity yet</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">🤖 Bot Fleet</div>
+        <div id="botGrid" class="loading">No bots deployed</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">🚀 Active Ventures</div>
+      <div id="ventureList" class="loading">No ventures yet</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 20px;">
+      <div class="panel-title">💬 Bot Collaboration</div>
+      <div id="messagesList" class="loading">No messages yet</div>
+    </div>
+
+  <script>
+    const API_URL = window.location.origin + '/api';
+    let authToken = null;
+
+    async function init() {
+      try {
+        const res = await fetch(API_URL + '/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'test@example.com',
+            password: 'password123'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          authToken = data.token;
+          console.log('✅ Logged in');
+          loadDashboard();
+         setInterval(() => {
+            loadDashboard();
+          }, 5000);
+        } else {
+          document.body.innerHTML = '<div style="text-align:center;padding:100px;"><h1>⚡ THE EXCHANGE</h1><p>Please create an account first</p></div>';
+        }
+      } catch (error) {
+        console.error('Login error:', error);
+      }
+    }
+
+    async function loadDashboard() {
+      try {
+        const res = await fetch(API_URL + '/dashboard', {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        const data = await res.json();
+
+        document.getElementById('walletBalance').textContent = '$' + data.user.walletBalance.toLocaleString();
+        document.getElementById('botCount').textContent = data.stats.botCount;
+        document.getElementById('ventureCount').textContent = data.stats.activeVentures;
+        document.getElementById('totalRevenue').textContent = '$' + data.stats.totalRevenue.toLocaleString();
+
+        updateBots(data.bots);
+        updateActivity(data.decisions);
+        updateVentures(data.projects);
+        loadMessages();
+      } catch (error) {
+        console.error('Dashboard error:', error);
+      }
+    }
+
+    function updateBots(bots) {
+      const grid = document.getElementById('botGrid');
+      if (bots.length === 0) {
+        grid.innerHTML = '<div class="loading">No bots deployed</div>';
+        return;
+      }
+
+      grid.innerHTML = bots.map(bot => `
+        <div class="bot-card">
+          <div class="bot-name">🤖 ${bot.name}</div>
+          <div style="font-size:13px;opacity:0.7;">${bot.ai_provider} • Capital: $${bot.capital_balance}</div>
+          <div class="bot-skills">
+            ${bot.skills.map(s => '<div class="skill-tag">' + s + '</div>').join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function updateActivity(decisions) {
+      const feed = document.getElementById('activityFeed');
+      if (decisions.length === 0) {
+        feed.innerHTML = '<div class="loading">No activity yet</div>';
+        return;
+      }
+
+      feed.innerHTML = decisions.slice(0, 10).map(d => `
+        <div class="activity-item">
+          <div class="activity-title">${d.bot_name}</div>
+          <div class="activity-desc">${d.decision_type} • ${d.venture_name}</div>
+          <div class="activity-time">${formatTime(d.timestamp)}</div>
+        </div>
+      `).join('');
+    }
+
+    function updateVentures(projects) {
+      const list = document.getElementById('ventureList');
+      if (projects.length === 0) {
+        list.innerHTML = '<div class="loading">No ventures yet</div>';
+        return;
+      }
+
+      const ventures = {};
+      projects.forEach(p => {
+        if (!ventures[p.venture_id]) {
+          ventures[p.venture_id] = { 
+            name: p.venture_name, 
+            bots: [],
+            totalHours: 0,
+            estimatedHours: 240 // Default estimate
+          };
+        }
+        ventures[p.venture_id].bots.push({
+          name: p.bot_name,
+          equity: p.equity_percentage,
+          hours: p.hours_worked
+        });
+        ventures[p.venture_id].totalHours += p.hours_worked;
+      });
+
+      list.innerHTML = Object.values(ventures).map(v => {
+        const progress = Math.min((v.totalHours / v.estimatedHours) * 100, 100);
+        const color = progress === 0 ? '#6b7280' : 
+                      progress < 30 ? '#ef4444' : 
+                      progress < 70 ? '#f59e0b' : 
+                      progress < 100 ? '#3b82f6' : '#10b981';
+        
+        const status = progress === 0 ? 'Not Started' :
+                       progress < 30 ? 'Starting' :
+                       progress < 70 ? 'In Progress' :
+                       progress < 100 ? 'Nearly Done' : 'Complete';
+
+        return `
+          <div style="background:rgba(255,255,255,0.08);border-radius:15px;padding:20px;margin-bottom:15px;border:1px solid rgba(255,255,255,0.1);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform='translateY(0)'">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+              <div style="font-size:18px;font-weight:700;">🚀 ${v.name}</div>
+              <div style="padding:5px 15px;background:${color}33;color:${color};border-radius:20px;font-size:12px;font-weight:600;">
+                ${status}
+              </div>
+            </div>
+            
+            <div style="background:rgba(0,0,0,0.2);border-radius:10px;height:8px;margin-bottom:10px;overflow:hidden;">
+              <div style="background:${color};height:100%;width:${progress}%;transition:width 0.5s;border-radius:10px;"></div>
+            </div>
+            
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:15px;opacity:0.8;">
+              <span>${v.totalHours}h / ${v.estimatedHours}h</span>
+              <span style="font-weight:600;">${progress.toFixed(0)}% Complete</span>
+            </div>
+            
+            <div style="display:grid;gap:8px;">
+              ${v.bots.map(b => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(255,255,255,0.05);border-radius:8px;font-size:13px;">
+                  <div>
+                    <span style="opacity:0.7;">🤖</span> ${b.name}
+                  </div>
+                  <div style="display:flex;gap:15px;align-items:center;">
+                    <span style="opacity:0.7;">${b.hours}h</span>
+                    <span style="padding:3px 10px;background:${color}22;color:${color};border-radius:12px;font-weight:600;font-size:12px;">
+                      ${b.equity.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+async function loadMessages() {
+      try {
+        const botsRes = await fetch(API_URL + '/bots/my', {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        const bots = await botsRes.json();
+        if (bots.length === 0) return;
+
+        const messagesRes = await fetch(API_URL + '/bots/' + bots[0].id + '/messages', {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        const messages = await messagesRes.json();
+
+        const list = document.getElementById('messagesList');
+        if (messages.length === 0) {
+          list.innerHTML = '<div class="loading">No messages yet</div>';
+          return;
+        }
+
+        list.innerHTML = messages.slice(0, 5).map(m => `
+          <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:15px;margin-bottom:10px;">
+            <div style="font-weight:600;margin-bottom:5px;">${m.from_bot_name} → ${m.to_bot_name || 'All'}</div>
+            <div style="font-size:12px;opacity:0.7;margin-bottom:5px;">${m.message_type}</div>
+            <div style="font-size:13px;">${m.content.message || m.content.taskDescription || JSON.stringify(m.content).substring(0, 100)}</div>
+          </div>
+        `).join('');
+      } catch (error) {
+        console.error('Messages error:', error);
+      }
+    }
+
+    function formatTime(timestamp) {
+      const diff = Date.now() - timestamp;
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return Math.floor(diff / 86400000) + 'd ago';
+    }
+
+    init();
+  </script>
+</body>
+</html>
