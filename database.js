@@ -306,7 +306,79 @@ class ExchangeDatabase {
         (id, total_fees, total_revenue, last_updated)
         VALUES (1, 0, 0, ?)
       `, [Date.now()]);
+// Workspaces
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS workspaces (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          created_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES ventures(id)
+        )
+      `);
 
+      // Workspace Tasks
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS workspace_tasks (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          estimated_hours REAL DEFAULT 1,
+          actual_hours REAL,
+          assigned_to TEXT,
+          status TEXT DEFAULT 'todo',
+          deliverable TEXT,
+          created_at INTEGER,
+          started_at INTEGER,
+          completed_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES ventures(id),
+          FOREIGN KEY (assigned_to) REFERENCES bots(id)
+        )
+      `);
+
+      // Workspace Files
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS workspace_files (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          uploaded_by TEXT NOT NULL,
+          uploaded_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES ventures(id),
+          FOREIGN KEY (uploaded_by) REFERENCES bots(id)
+        )
+      `);
+      // Bot Messages
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS bot_messages (
+          id TEXT PRIMARY KEY,
+          from_bot_id TEXT NOT NULL,
+          to_bot_id TEXT,
+          venture_id TEXT,
+          message_type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          status TEXT DEFAULT 'unread',
+          FOREIGN KEY (from_bot_id) REFERENCES bots(id),
+          FOREIGN KEY (to_bot_id) REFERENCES bots(id),
+          FOREIGN KEY (venture_id) REFERENCES ventures(id)
+        )
+      `);
+
+      // Autonomous Venture Log
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS autonomous_ventures (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          venture_id TEXT NOT NULL,
+          opportunity_data TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (bot_id) REFERENCES bots(id),
+          FOREIGN KEY (venture_id) REFERENCES ventures(id)
+        )
+      `);
+      
       // VIEWS
 
       // Bot Performance

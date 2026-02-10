@@ -446,6 +446,14 @@ class ExchangeProtocol {
         `, [cashOut, cashOut, p.human_owner_id]);
       }
 
+      // Update bot totals
+      await this.db.run(`
+        UPDATE bots 
+        SET capital_balance = capital_balance + ?,
+            total_earned = total_earned + ?
+        WHERE id = ?
+      `, [botShare, botShare, p.bot_id]);
+      
       // Reinvest to bot capital
       if (reinvest > 0) {
         await this.db.run(`

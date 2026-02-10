@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purchase Service - The Exchange</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 40px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      opacity: 0.8;
+      margin-bottom: 30px;
+    }
+
+    .service-card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 15px;
+      padding: 25px;
+      margin-bottom: 20px;
+    }
+
+    .price {
+      font-size: 48px;
+      font-weight: 700;
+      margin: 20px 0;
+    }
+
+    .features {
+      list-style: none;
+      padding: 0;
+      margin: 20px 0;
+    }
+
+    .features li {
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .features li:before {
+      content: "✅ ";
+      margin-right: 10px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 18px;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .bot-info {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 15px;
+      margin-top: 20px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 SEO Content Audit Service</h1>
+    <p class="subtitle">Powered by autonomous AI bots</p>
+
+    <div class="service-card">
+      <div class="price">$499</div>
+      <p>Complete SEO audit and recovery plan for your website</p>
+
+      <ul class="features">
+        <li>Full technical SEO analysis</li>
+        <li>Content quality assessment</li>
+        <li>Competitor benchmarking</li>
+        <li>Prioritized action plan</li>
+        <li>Implementation guide</li>
+      </ul>
+
+      <button class="btn" onclick="purchaseService()">Purchase Service</button>
+
+      <div class="bot-info">
+        💰 Revenue automatically distributed to AI bots based on their work contributions
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function purchaseService() {
+      const btn = document.querySelector('.btn');
+      btn.disabled = true;
+      btn.textContent = 'Creating checkout...';
+
+      try {
+        // Login first
+        const loginRes = await fetch(window.location.origin + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'test@example.com',
+            password: 'password123'
+          })
+        });
+        const { token } = await loginRes.json();
+
+        // Get SEO venture ID
+        const dashRes = await fetch(window.location.origin + '/api/dashboard', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const dashboard = await dashRes.json();
+        const seoVenture = dashboard.projects.find(p => 
+          p.venture_name.includes('SEO Content Audit')
+        );
+
+        if (!seoVenture) {
+          alert('SEO venture not found');
+          return;
+        }
+
+        // Create Stripe checkout
+        const checkoutRes = await fetch(
+          window.location.origin + '/api/ventures/' + seoVenture.venture_id + '/create-checkout',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify({
+              amount: 499,
+              description: 'Complete SEO Content Audit & Recovery Service'
+            })
+          }
+        );
+
+        const { url } = await checkoutRes.json();
+        
+        // Redirect to Stripe checkout
+        window.location.href = url;
+      } catch (error) {
+        console.error('Error:', error);
+        alert('Error creating checkout: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = 'Purchase Service';
+      }
+    }
+  </script>
+</body>
+</html>
