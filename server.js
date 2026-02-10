@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -36,6 +37,11 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+// Serve frontend
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend-v3.html'));
+});
 
 // ============================================================================
 // AUTH ENDPOINTS
