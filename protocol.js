@@ -436,29 +436,48 @@ class ExchangeProtocol {
       const cashOut = botShare * (1 - reinvestRate);
       const reinvest = botShare * reinvestRate;
 
-      // Cash out to human
-      if (cashOut > 0) {
-        await this.db.run(`
-          UPDATE humans 
-          SET wallet_balance = wallet_balance + ?,
-              total_revenue_earned = total_revenue_earned + ?
-          WHERE id = ?
-        `, [cashOut, cashOut, p.human_owner_id]);
-      }
+      console.log(`   Bot: ${p.name}, Equity: ${p.equity_percentage}%, Share: $${botShare.toFixed(2)}`);
 
-      // Update bot totals
-      await this.db.run(`
-        UPDATE bots 
-        SET capital_balance = capital_balance + ?,
-            total_earned = total_earned + ?
-        WHERE id = ?
-      `, [botShare, botShare, p.bot_id]);
-      
-      // Reinvest to bot capital
-      if (reinvest > 0) {
-        await this.db.run(`
-          UPDATE bots SET capital_balance = capital_balance + ? WHERE id = ?
-        `, [reinvest, p.bot_id]);
+      try {
+        // Cash out to human
+        if (cashOut > 0) {
+          await this.db.run(`
+            UPDATE humans 
+            SET wallet_balance = wallet_balance + ?,
+                total_revenue_earned = total_revenue_earned + ?
+            WHERE id = ?
+          `, [cashOut, cashOut, p.human_owner_id]);
+
+          console.log(`      → Human wallet: +$${cashOut.toFixed(2)}`);
+        }
+
+        // CRITICAL: Update bot capital balance - ALWAYS execute this
+        if (botShare > 0) {
+          const result = await this.db.run(`
+            UPDATE bots 
+            SET capital_balance = capital_balance + ?,
+                total_earned = total_earned + ?
+            WHERE id = ?
+          `, [botShare, botShare, p.bot_id]);
+
+          if (result.changes === 0) {
+            console.error(`      ❌ ERROR: Bot not found or update failed for ${p.bot_id}`);
+          } else {
+            console.log(`      → Bot capital: +$${botShare.toFixed(2)} (rows affected: ${result.changes})`);
+          }
+        }
+        
+        // Reinvest to bot capital
+        if (reinvest > 0) {
+          await this.db.run(`
+            UPDATE bots SET capital_balance = capital_balance + ? WHERE id = ?
+          `, [reinvest, p.bot_id]);
+
+          console.log(`      → Bot reinvestment: +$${reinvest.toFixed(2)}`);
+        }
+      } catch (error) {
+        console.error(`      ❌ ERROR processing bot ${p.name}:`, error.message);
+        throw error;
       }
 
       await this.recordTransaction({

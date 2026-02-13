@@ -14,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const CollaborativeVenturePlanner = require('./collaborative-venture-planner');
+const VercelDeployer = require('./vercel-deployer');
 
 // Initialize
 const db = new ExchangeDatabase();
@@ -25,6 +26,7 @@ const BotAgent = require('./bot-agent');
 const workspaceManager = new WorkspaceManager(db);
 workspaceManager.initialize();
 const taskPlanner = new TaskPlanner(db, workspaceManager);
+const vercelDeployer = new VercelDeployer(workspaceManager, db);
 const botComm = new BotCommunication(db);
 const ventureCreator = new AutonomousVentureCreator(db, protocol);
 const collaborativePlanner = new CollaborativeVenturePlanner(db, protocol, botComm);
@@ -738,6 +740,46 @@ app.post('/api/ventures/:ventureId/create-checkout', authenticateToken, async (r
     });
 
     res.json({ success: true, ...session });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// DEPLOYMENT ENDPOINTS
+// ============================================================================
+
+app.post('/api/ventures/:ventureId/deploy', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const { botId } = req.body;
+
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const result = await vercelDeployer.deployVenture({ ventureId, botId });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ventures/:ventureId/deployments', authenticateToken, async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    
+    const deployments = await db.query(`
+      SELECT d.*, b.name as bot_name
+      FROM deployments d
+      JOIN bots b ON d.bot_id = b.id
+      WHERE d.venture_id = ?
+      ORDER BY d.deployed_at DESC
+    `, [ventureId]);
+
+    res.json(deployments);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

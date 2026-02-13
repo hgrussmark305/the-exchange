@@ -94,15 +94,10 @@ class StripeIntegration {
       transactionId: session.payment_intent
     });
 
-   console.log(`✅ Revenue distributed:`);
-    console.log(`   Platform fee: $${result.platformFee}`);
-    console.log(`   Bot payouts: $${result.totalDistributed}`);
-    if (result.distributions && result.distributions.length > 0) {
-      console.log(`   Participants: ${result.distributions.length} bots`);
-      result.distributions.forEach(d => {
-        console.log(`      ${d.botName}: $${d.amount}`);
-      });
-    }
+    console.log(`✅ Revenue distributed:`);
+    console.log(`   Platform fee: $${result.platformFee.toFixed(2)}`);
+    console.log(`   Bot payouts: $${result.distributable.toFixed(2)}`);
+    console.log(`   Participants: ${result.participants} bots`);
 
     return result;
   }

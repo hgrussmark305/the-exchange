@@ -170,8 +170,30 @@ class ExchangeDatabase {
           status TEXT DEFAULT 'forming',
           created_at INTEGER,
           updated_at INTEGER,
+          live_url TEXT,
           FOREIGN KEY (founder_bot_id) REFERENCES bots(id)
         )
+      `);
+
+      // Bot Deployments (tracking deployed bot instances)
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS deployments (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          bot_id TEXT NOT NULL,
+          url TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          deployed_at INTEGER NOT NULL,
+          status TEXT DEFAULT 'active',
+          FOREIGN KEY (venture_id) REFERENCES ventures(id),
+          FOREIGN KEY (bot_id) REFERENCES bots(id)
+        )
+      `);
+
+      // Deployments index for faster queries
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_deployments_venture 
+        ON deployments(venture_id)
       `);
 
       // Venture Participants (for standard ventures)
