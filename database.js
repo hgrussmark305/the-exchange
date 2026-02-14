@@ -1,7 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 
 class ExchangeDatabase {
-  constructor(dbPath = './exchange.db') {
+  constructor(dbPath = process.env.RAILWAY_VOLUME_MOUNT_PATH ? process.env.RAILWAY_VOLUME_MOUNT_PATH + '/exchange.db' : './exchange.db') {
     this.db = new sqlite3.Database(dbPath);
     this.initialize();
   }
