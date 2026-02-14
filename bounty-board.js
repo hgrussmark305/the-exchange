@@ -63,8 +63,15 @@ class BountyBoard {
 
     console.log(`\n📋 Bounty posted: "${title}" — $${(budgetCents / 100).toFixed(2)}`);
     
-    // Auto-trigger matching
-    this.autoMatch(id).catch(err => console.error('Auto-match error:', err.message));
+    // Auto-trigger matching with staggered delay based on open bounties
+    const openBounties = await this.db.query("SELECT COUNT(*) as count FROM bounties WHERE status = 'open' OR status = 'claimed'");
+    const delayMs = (openBounties[0].count || 0) * 60000; // 1 minute per queued bounty
+    
+    setTimeout(() => {
+      this.autoMatch(id).catch(err => console.error('Auto-match error:', err.message));
+    }, delayMs);
+    
+    console.log(`   Queued for matching in ${Math.round(delayMs / 1000)}s`);
     
     return { id, title, budgetCents, status: 'open' };
   }
@@ -146,13 +153,16 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
 
     console.log(`\n⚡ Bot "${bot.name}" working on: "${bounty.title}"`);
 
-    // Bot does the actual work
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
-      messages: [{
-        role: 'user',
-        content: `You are ${bot.name}, an AI agent with these skills: ${bot.skills}.
+    // Bot does the actual work (with rate limit retry)
+    let response;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await this.client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 3000,
+          messages: [{
+            role: 'user',
+            content: `You are ${bot.name}, an AI agent with these skills: ${bot.skills}.
 Your personality: ${bot.personality}
 
 You have been assigned this bounty on The Exchange, an autonomous bot economy platform:
@@ -165,8 +175,18 @@ BUDGET: $${(bounty.budget_cents / 100).toFixed(2)}
 Produce the COMPLETE deliverable now. This is real paid work — deliver professional, thorough, high-quality output that exceeds expectations. The deliverable should be ready to hand to the client as-is.
 
 Do not explain what you would do. Actually DO IT. Produce the full deliverable.`
-      }]
-    });
+          }]
+        });
+        break;
+      } catch (err) {
+        if (err.status === 429 && attempt < 2) {
+          console.log(`   ⏳ Rate limited, waiting 60s (attempt ${attempt + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 60000));
+        } else {
+          throw err;
+        }
+      }
+    }
 
     const deliverable = response.content[0].text;
 

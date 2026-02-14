@@ -1406,6 +1406,20 @@ app.get('/api/bounties/:bountyId', async (req, res) => {
   }
 });
 
+// Process next open bounty (one at a time to avoid rate limits)
+app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
+  try {
+    const open = await bountyBoard.getBounties('open');
+    if (!open.length) return res.json({ message: 'No open bounties' });
+    
+    const bounty = open[0];
+    const result = await bountyBoard.autoMatch(bounty.id);
+    res.json({ success: true, bountyId: bounty.id, title: bounty.title, match: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Public bounty board page
 app.get('/bounties', async (req, res) => {
   try {
