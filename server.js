@@ -82,6 +82,51 @@ app.get('/api/ventures/:ventureId/revenue', authenticateToken, async (req, res) 
   }
 });
 
+/**
+ * GET /api/ventures/active
+ * Returns most active ventures for public homepage
+ */
+app.get('/api/ventures/active', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '10', 10) || 10, 100);
+    const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+
+    const ventures = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT 
+          v.id as venture_id,
+          v.title as venture_title,
+          v.status,
+          v.total_revenue as total_revenue,
+          COUNT(DISTINCT vp.bot_id) as bot_count,
+          COALESCE(SUM(vp.hours_worked), 0) as total_hours,
+          v.created_at
+        FROM ventures v
+        LEFT JOIN venture_participants vp ON v.id = vp.venture_id
+        GROUP BY v.id
+        ORDER BY total_hours DESC
+        LIMIT ? OFFSET ?
+      `, [limit, offset], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+
+    res.json(ventures.map(v => ({
+      id: v.venture_id,
+      title: v.venture_title,
+      status: v.status,
+      total_revenue: v.total_revenue || 0,
+      bot_count: v.bot_count,
+      total_hours: v.total_hours,
+      estimated_hours: 240,
+      created_at: v.created_at ? new Date(v.created_at).toISOString() : null
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // AUTH ENDPOINTS
 // ============================================================================
@@ -805,114 +850,6 @@ app.post('/api/ventures/:ventureId/analyze-and-plan', authenticateToken, async (
 // ============================================================================
 // PUBLIC ENDPOINTS (for homepage)
 // ============================================================================
-
-/**
- * GET /api/ventures/active
- * Returns most active ventures for public homepage
- */
-app.get('/api/ventures/active', async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || '10', 10) || 10, 100);
-    const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
-
-    const ventures = await new Promise((resolve, reject) => {
-      db.db.all(`
-        SELECT 
-          v.id as venture_id,
-          v.title as venture_title,
-          v.status,
-          v.total_revenue as total_revenue,
-          COUNT(DISTINCT vp.bot_id) as bot_count,
-          COALESCE(SUM(vp.hours_worked), 0) as total_hours,
-          v.created_at
-        FROM ventures v
-        LEFT JOIN venture_participants vp ON v.id = vp.venture_id
-        GROUP BY v.id
-        ORDER BY total_hours DESC
-        LIMIT ? OFFSET ?
-      `, [limit, offset], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      });
-    });
-
-    res.json(ventures.map(v => ({
-      id: v.venture_id,
-      title: v.venture_title,
-      status: v.status,
-      total_revenue: v.total_revenue || 0,
-      bot_count: v.bot_count,
-      total_hours: v.total_hours,
-      estimated_hours: 240,
-      created_at: v.created_at ? new Date(v.created_at).toISOString() : null
-    })));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/activity/recent', async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || '15', 10) || 15, 100);
-
-    const activities = await new Promise((resolve, reject) => {
-      db.db.all(`
-        SELECT 
-          bm.id,
-          bm.content as action,
-          bm.timestamp,
-          b.name as bot_name
-        FROM bot_messages bm
-        JOIN bots b ON bm.from_bot_id = b.id
-        ORDER BY bm.timestamp DESC
-        LIMIT ?
-      `, [limit], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      });
-    });
-
-    if (activities.length === 0) {
-      const tasks = await new Promise((resolve, reject) => {
-        db.db.all(`
-          SELECT 
-            wt.id,
-            wt.title as action,
-            wt.completed_at as created_at,
-            b.name as bot_name,
-            wt.status
-          FROM workspace_tasks wt
-          JOIN bots b ON wt.assigned_to = b.id
-          ORDER BY wt.updated_at DESC
-          LIMIT ?
-        `, [limit], (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows || []);
-        });
-      });
-      return res.json(tasks.map(t => ({
-        id: t.id,
-        action: t.action,
-        created_at: t.created_at ? new Date(t.created_at).toISOString() : null,
-        bot_name: t.bot_name,
-        status: t.status
-      })));
-    }
-
-    res.json(activities.map(a => {
-      let parsedAction = a.action;
-      try { parsedAction = JSON.parse(a.action); } catch (e) { /* leave as string */ }
-      return {
-        id: a.id,
-        action: parsedAction,
-        created_at: a.timestamp ? new Date(a.timestamp).toISOString() : null,
-        bot_name: a.bot_name
-      };
-    }));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 app.listen(PORT, async () => {
   console.log('\n╔════════════════════════════════════════════════════════╗');
