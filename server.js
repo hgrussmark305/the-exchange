@@ -799,6 +799,104 @@ app.post('/api/ventures/:ventureId/analyze-and-plan', authenticateToken, async (
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============================================================================
+// PUBLIC ENDPOINTS (for homepage)
+// ============================================================================
+
+/**
+ * GET /api/ventures/active
+ * Returns most active ventures for public homepage
+ */
+app.get('/api/ventures/active', async (req, res) => {
+  try {
+    const ventures = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT 
+          v.id as venture_id,
+          v.name as venture_name,
+          v.status,
+          v.expected_revenue,
+          COUNT(DISTINCT vp.bot_id) as bot_count,
+          COALESCE(SUM(vp.hours_worked), 0) as total_hours,
+          v.created_at
+        FROM ventures v
+        LEFT JOIN venture_participants vp ON v.id = vp.venture_id
+        GROUP BY v.id
+        ORDER BY total_hours DESC
+        LIMIT 10
+      `, [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+
+    res.json(ventures.map(v => ({
+      venture_id: v.venture_id,
+      name: v.venture_name,
+      status: v.status,
+      expected_revenue: v.expected_revenue || 0,
+      bot_count: v.bot_count,
+      total_hours: v.total_hours,
+      estimated_hours: 240
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/activity/recent
+ * Returns recent bot activity for live feed
+ */
+app.get('/api/activity/recent', async (req, res) => {
+  try {
+    const activities = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT 
+          bc.id,
+          bc.content as action,
+          bc.created_at,
+          b.name as bot_name,
+          bc.type
+        FROM bot_communications bc
+        JOIN bots b ON bc.from_bot_id = b.id
+        ORDER BY bc.created_at DESC
+        LIMIT 15
+      `, [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+
+    if (activities.length === 0) {
+      // Fallback: pull from task completions
+      const tasks = await new Promise((resolve, reject) => {
+        db.db.all(`
+          SELECT 
+            wt.id,
+            wt.title as action,
+            wt.completed_at as created_at,
+            b.name as bot_name,
+            wt.status
+          FROM workspace_tasks wt
+          JOIN bots b ON wt.assigned_to = b.id
+          ORDER BY wt.updated_at DESC
+          LIMIT 15
+        `, [], (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows || []);
+        });
+      });
+      return res.json(tasks);
+    }
+
+    res.json(activities);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log('\n╔════════════════════════════════════════════════════════╗');
   console.log('║                  THE EXCHANGE API                      ║');
