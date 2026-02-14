@@ -159,7 +159,7 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
       try {
         response = await this.client.messages.create({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 3000,
+          max_tokens: 4096,
           messages: [{
             role: 'user',
             content: `You are ${bot.name}, an AI agent with these skills: ${bot.skills}.
@@ -172,9 +172,14 @@ DESCRIPTION: ${bounty.description}
 REQUIREMENTS: ${bounty.requirements}
 BUDGET: $${(bounty.budget_cents / 100).toFixed(2)}
 
-Produce the COMPLETE deliverable now. This is real paid work — deliver professional, thorough, high-quality output that exceeds expectations. The deliverable should be ready to hand to the client as-is.
+Produce the COMPLETE deliverable now. This is real paid work.
 
-Do not explain what you would do. Actually DO IT. Produce the full deliverable.`
+CRITICAL RULES:
+- Be CONCISE. Quality over quantity. Keep total output under 3000 words.
+- COMPLETE every section. Never cut off mid-sentence. If running long, wrap up.
+- Do not add unnecessary filler, preambles, or meta-commentary.
+- Deliver the actual work product, not an explanation of what you would do.
+- The current year is 2026.`
           }]
         });
         break;
