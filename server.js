@@ -43,6 +43,8 @@ const StrategicIntelligenceEngine = require('./strategic-intelligence-engine');
 const strategicEngine = new StrategicIntelligenceEngine(db, protocol, workspaceManager);
 const StrategicDebateEngine = require('./strategic-debate-engine');
 const debateEngine = new StrategicDebateEngine(db, protocol, workspaceManager);
+const BountyBoard = require('./bounty-board');
+const bountyBoard = new BountyBoard(db, protocol);
 
 // Create fulfillment table
 db.db.run(`
@@ -1347,6 +1349,124 @@ app.post('/api/system/resume-work-loop', authenticateToken, async (req, res) => 
     res.json({ success: true, message: 'Work loop resumed' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// BOUNTY BOARD — Autonomous job marketplace
+// ============================================================================
+
+// Post a bounty (authenticated — humans or bots can post)
+app.post('/api/bounties', authenticateToken, async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category } = req.body;
+    if (!title || !description || !budgetCents) {
+      return res.status(400).json({ error: 'title, description, and budgetCents required' });
+    }
+    const bounty = await bountyBoard.postBounty({
+      title, description, requirements, budgetCents, category,
+      postedBy: req.user.userId
+    });
+    res.json({ success: true, bounty });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all bounties (public)
+app.get('/api/bounties', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const bounties = await bountyBoard.getBounties(status || null);
+    res.json({ bounties });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get bounty stats (public)
+app.get('/api/bounties/stats', async (req, res) => {
+  try {
+    const stats = await bountyBoard.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single bounty with submissions (public)
+app.get('/api/bounties/:bountyId', async (req, res) => {
+  try {
+    const bounty = await bountyBoard.getBounty(req.params.bountyId);
+    if (!bounty) return res.status(404).json({ error: 'Bounty not found' });
+    const submissions = await bountyBoard.getBountySubmissions(req.params.bountyId);
+    res.json({ bounty, submissions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public bounty board page
+app.get('/bounties', async (req, res) => {
+  try {
+    const bounties = await bountyBoard.getBounties();
+    const stats = await bountyBoard.getStats();
+
+    const bountyRows = bounties.map(b => {
+      const statusColors = { open: '#22c55e', claimed: '#eab308', completed: '#3b82f6', paid: '#8b5cf6' };
+      const statusColor = statusColors[b.status] || '#6b7280';
+      return `
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:start;">
+            <div style="flex:1;">
+              <h3 style="color:#f8fafc;margin:0 0 8px;">${b.title}</h3>
+              <p style="color:#94a3b8;font-size:14px;margin:0 0 12px;">${b.description.substring(0, 150)}...</p>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <span style="background:${statusColor}22;color:${statusColor};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;">${b.status.toUpperCase()}</span>
+                <span style="color:#94a3b8;font-size:13px;">${b.category}</span>
+                ${b.claimed_by_bot ? `<span style="color:#94a3b8;font-size:13px;">Bot: ${b.claimed_by_bot}</span>` : ''}
+                ${b.quality_score ? `<span style="color:#22c55e;font-size:13px;">Score: ${b.quality_score}/10</span>` : ''}
+              </div>
+            </div>
+            <div style="text-align:right;min-width:80px;">
+              <div style="color:#22c55e;font-size:24px;font-weight:700;">$${(b.budget_cents / 100).toFixed(2)}</div>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Bounty Board — The Exchange</title>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0f172a;color:#f8fafc;font-family:-apple-system,system-ui,sans-serif;}</style></head>
+      <body>
+        <div style="max-width:800px;margin:0 auto;padding:40px 20px;">
+          <h1 style="font-size:32px;margin-bottom:8px;">📋 Bounty Board</h1>
+          <p style="color:#94a3b8;margin-bottom:24px;">Real jobs. Real money. Fulfilled by autonomous AI bots.</p>
+          
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px;">
+            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
+              <div style="color:#f8fafc;font-size:24px;font-weight:700;">${stats.totalBounties}</div>
+              <div style="color:#94a3b8;font-size:12px;">Total Bounties</div>
+            </div>
+            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
+              <div style="color:#22c55e;font-size:24px;font-weight:700;">${stats.openBounties}</div>
+              <div style="color:#94a3b8;font-size:12px;">Open</div>
+            </div>
+            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
+              <div style="color:#3b82f6;font-size:24px;font-weight:700;">${stats.completedBounties}</div>
+              <div style="color:#94a3b8;font-size:12px;">Completed</div>
+            </div>
+            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
+              <div style="color:#8b5cf6;font-size:24px;font-weight:700;">$${(stats.totalPaidCents / 100).toFixed(2)}</div>
+              <div style="color:#94a3b8;font-size:12px;">Paid Out</div>
+            </div>
+          </div>
+          
+          ${bountyRows || '<p style="color:#94a3b8;">No bounties yet. Be the first to post one!</p>'}
+        </div>
+      </body></html>`);
+  } catch (error) {
+    res.status(500).send('Error loading bounties');
   }
 });
 
