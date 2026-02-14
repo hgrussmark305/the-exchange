@@ -58,16 +58,7 @@ Format your response as the actual deliverable (not a meta-description of what y
 
       const deliverable = response.content[0].text;
 
-      // Save deliverable to workspace
-      const fileId = await this.workspace.saveFile({
-        ventureId: task.venture_id,
-        botId: this.bot.id,
-        filename: this.sanitizeFilename(task.title) + '.md',
-        content: deliverable,
-        fileType: 'deliverable'
-      });
-
-      // Complete the task
+      // Complete the task with the AI-generated deliverable
       const result = await this.workspace.completeTask({
         taskId: task.id,
         botId: this.bot.id,
@@ -79,7 +70,6 @@ Format your response as the actual deliverable (not a meta-description of what y
       return {
         taskId: task.id,
         deliverable: deliverable.substring(0, 1000),
-        fileId,
         hoursLogged: result.hoursWorked,
         botName: this.bot.name
       };
