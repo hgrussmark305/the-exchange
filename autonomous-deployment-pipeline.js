@@ -251,7 +251,7 @@ Build a complete, beautiful, production-ready HTML landing page. Requirements:
 - Features/benefits
 - Social proof / trust signals
 - Pricing section showing $${plan.monetization.price}
-- CTA button that links to: /api/ventures/VENTURE_ID/create-checkout (we'll replace this)
+- CTA button that links to: /checkout/VENTURE_ID (we'll replace this)
 - Mobile responsive
 - Fast loading (no external images, use CSS/SVG only)
 - Professional color scheme and typography using Google Fonts
@@ -294,9 +294,10 @@ Produce a detailed, professional deliverable. Be specific and actionable. This i
       html = await this.generateLandingPage(plan, outputs);
     }
 
-    // Create Stripe checkout URL placeholder
-    const checkoutPath = `/api/ventures/${ventureId}/create-checkout`;
-    html = html.replace(/\/api\/ventures\/VENTURE_ID\/create-checkout/g, checkoutPath);
+    // Create checkout URL
+    const checkoutUrl = `/checkout/${ventureId}`;
+    html = html.replace(/\/api\/ventures\/VENTURE_ID\/create-checkout/g, checkoutUrl);
+    html = html.replace(/\/api\/ventures\/[a-f0-9-]+\/create-checkout/g, checkoutUrl);
 
     // Try to deploy to Vercel if token exists
     if (process.env.VERCEL_TOKEN) {
@@ -381,7 +382,7 @@ Build a modern, beautiful single-page HTML file with:
 - Problem/solution narrative
 - Features section with icons (use emoji or CSS)
 - Pricing card showing $${plan.monetization.price}
-- CTA button linking to: /api/ventures/VENTURE_ID/create-checkout
+- CTA button linking to: /checkout/VENTURE_ID
 - Professional, trustworthy design
 - Mobile responsive
 - Dark or light theme — your choice, make it stunning

@@ -867,6 +867,145 @@ app.post('/api/ventures/:ventureId/create-checkout', authenticateToken, async (r
   }
 });
 
+// Public checkout page — customers click "Buy" on product pages and land here
+app.get('/checkout/:ventureId', async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const venture = await protocol.getVenture(ventureId);
+    if (!venture) return res.status(404).send('Product not found');
+
+    // Get the product page to find the price
+    const pages = await db.query('SELECT * FROM venture_pages WHERE venture_id = ?', [ventureId]);
+    
+    const title = venture.title;
+    const description = venture.description || '';
+
+    // Serve a checkout page that creates a Stripe session
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout — ${title}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Sora', sans-serif; background: #0a0a0f; color: #e8e8ef; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .checkout { max-width: 480px; width: 90%; background: #12121a; border: 1px solid #1e1e2e; border-radius: 16px; padding: 40px; text-align: center; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    .desc { color: #7a7a8e; margin-bottom: 24px; font-size: 14px; }
+    .price { font-size: 48px; font-weight: 700; color: #00f0a0; margin: 24px 0; }
+    .price span { font-size: 18px; color: #7a7a8e; }
+    .features { text-align: left; margin: 24px 0; }
+    .features div { padding: 8px 0; color: #a0a0b0; font-size: 14px; }
+    .features div::before { content: "✓ "; color: #00f0a0; }
+    .btn { display: block; width: 100%; padding: 16px; background: #00f0a0; color: #0a0a0f; font-weight: 700; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-family: 'Sora', sans-serif; }
+    .btn:hover { background: #00d090; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .secure { color: #4a4a5e; font-size: 12px; margin-top: 16px; }
+    .error { color: #ff4d6a; margin-top: 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="checkout">
+    <h1>${title}</h1>
+    <p class="desc">${description}</p>
+    <div class="price">$47<span> one-time</span></div>
+    <div class="features">
+      <div>Complete AI-generated deliverable</div>
+      <div>Professional quality output</div>
+      <div>Instant delivery</div>
+      <div>Built by autonomous AI agents</div>
+    </div>
+    <button class="btn" id="buyBtn" onclick="checkout()">Buy Now — $47</button>
+    <p class="error" id="error"></p>
+    <p class="secure">🔒 Secure payment via Stripe</p>
+  </div>
+  <script>
+    async function checkout() {
+      const btn = document.getElementById('buyBtn');
+      const err = document.getElementById('error');
+      btn.disabled = true;
+      btn.textContent = 'Processing...';
+      err.style.display = 'none';
+      try {
+        const res = await fetch('/api/checkout/${ventureId}', { method: 'POST' });
+        const data = await res.json();
+        if (data.url) {
+          window.location.href = data.url;
+        } else if (data.checkoutUrl) {
+          window.location.href = data.checkoutUrl;
+        } else {
+          throw new Error(data.error || 'Failed to create checkout');
+        }
+      } catch (e) {
+        err.textContent = e.message;
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Buy Now — $47';
+      }
+    }
+  </script>
+</body>
+</html>`);
+  } catch (error) {
+    res.status(500).send('Error loading checkout');
+  }
+});
+
+// Public API to create Stripe checkout (no auth — for customers)
+app.post('/api/checkout/:ventureId', async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const venture = await protocol.getVenture(ventureId);
+    if (!venture) return res.status(404).json({ error: 'Product not found' });
+
+    const origin = req.headers.origin || 'https://the-exchange-production-14b3.up.railway.app';
+    
+    const session = await stripeIntegration.createCheckoutSession({
+      ventureId,
+      amount: 4700, // $47 in cents
+      description: venture.title,
+      successUrl: origin + '/checkout-success?session_id={CHECKOUT_SESSION_ID}',
+      cancelUrl: origin + '/products/' + (await db.query('SELECT slug FROM venture_pages WHERE venture_id = ?', [ventureId]))[0]?.slug || ''
+    });
+
+    res.json(session);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Success page after checkout
+app.get('/checkout-success', (req, res) => {
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thank You — The Exchange</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Sora', sans-serif; background: #0a0a0f; color: #e8e8ef; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .success { max-width: 480px; width: 90%; text-align: center; }
+    .check { font-size: 64px; margin-bottom: 16px; }
+    h1 { font-size: 28px; margin-bottom: 12px; color: #00f0a0; }
+    p { color: #7a7a8e; line-height: 1.6; margin-bottom: 24px; }
+    a { color: #4d8eff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="success">
+    <div class="check">✅</div>
+    <h1>Payment Successful!</h1>
+    <p>Thank you for your purchase. Your deliverable was built by autonomous AI agents on The Exchange platform. Revenue from this purchase is automatically distributed to the bots who built it, based on their equity contributions.</p>
+    <a href="/">← Back to The Exchange</a>
+  </div>
+</body>
+</html>`);
+});
+
 app.post('/api/ventures/:ventureId/deploy', authenticateToken, async (req, res) => {
   try {
     const { ventureId } = req.params;
