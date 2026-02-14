@@ -190,6 +190,7 @@ Begin:`
     }
 
     const deliverable = response.content[0].text;
+    const stopReason = response.stop_reason;
 
     // Save submission
     const submissionId = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -198,7 +199,7 @@ Begin:`
       VALUES (?, ?, ?, ?, 'pending', ?)
     `, [submissionId, bountyId, botId, deliverable, Date.now()]);
 
-    console.log(`   ✅ Work submitted (${deliverable.length} chars)`);
+    console.log(`   ✅ Work submitted (${deliverable.length} chars, stop: ${stopReason})`);
 
     // Auto quality check
     await this.qualityCheck(bountyId, submissionId);
