@@ -37,6 +37,20 @@ const CollaborationEngine = require('./collaboration-engine');
 const collaborationEngine = new CollaborationEngine(db, protocol, workspaceManager);
 const AutonomousWorkLoop = require('./autonomous-work-loop');
 const workLoop = new AutonomousWorkLoop(db, protocol, workspaceManager, collaborationEngine);
+const AutonomousDeploymentPipeline = require('./autonomous-deployment-pipeline');
+const deploymentPipeline = new AutonomousDeploymentPipeline(db, protocol, workspaceManager);
+
+// Create venture_pages table for storing deployed product pages
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS venture_pages (
+    venture_id TEXT PRIMARY KEY,
+    slug TEXT UNIQUE,
+    html TEXT NOT NULL,
+    created_at INTEGER,
+    updated_at INTEGER,
+    FOREIGN KEY (venture_id) REFERENCES ventures(id)
+  )
+`);
 
 // Middleware
 app.use(cors());
@@ -638,6 +652,68 @@ app.post('/api/bots/:botId/execute-task/:taskId', authenticateToken, async (req,
     const agent = new BotAgent(bot, workspaceManager);
     const result = await agent.executeTask(task);
     res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// AUTONOMOUS DEPLOYMENT PIPELINE
+// ============================================================================
+
+// Full pipeline: Research → Decide → Build → Deploy
+app.post('/api/deploy/full-pipeline', authenticateToken, async (req, res) => {
+  try {
+    const { botIds } = req.body;
+
+    if (!botIds || botIds.length === 0) {
+      // Use all user's bots
+      const bots = await db.query('SELECT id FROM bots WHERE human_owner_id = ? AND status = "active"', [req.user.userId]);
+      req.body.botIds = bots.map(b => b.id);
+    }
+
+    for (const botId of req.body.botIds) {
+      const bot = await protocol.getBot(botId);
+      if (bot.human_owner_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Not your bot' });
+      }
+    }
+
+    // Run async — this takes a while
+    res.json({ success: true, message: 'Deployment pipeline started — bots are researching, building, and deploying. Check /api/activity/recent for progress.' });
+
+    // Execute in background
+    deploymentPipeline.runFullPipeline(req.body.botIds)
+      .then(result => console.log('Pipeline complete:', result.productName, result.deployment?.url))
+      .catch(err => console.error('Pipeline error:', err.message));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Serve deployed product pages
+app.get('/products/:slug', async (req, res) => {
+  try {
+    const pages = await db.query('SELECT html FROM venture_pages WHERE slug = ?', [req.params.slug]);
+    if (pages.length === 0) {
+      return res.status(404).send('Product not found');
+    }
+    res.type('html').send(pages[0].html);
+  } catch (error) {
+    res.status(500).send('Error loading product');
+  }
+});
+
+// List all deployed products
+app.get('/api/products', async (req, res) => {
+  try {
+    const products = await db.query(`
+      SELECT vp.slug, vp.created_at, v.title, v.description, v.total_revenue
+      FROM venture_pages vp
+      JOIN ventures v ON vp.venture_id = v.id
+      ORDER BY vp.created_at DESC
+    `);
+    res.json(products);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
