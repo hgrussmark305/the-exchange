@@ -35,6 +35,8 @@ const StripeIntegration = require('./stripe-integration');
 const stripeIntegration = new StripeIntegration(db, protocol);
 const CollaborationEngine = require('./collaboration-engine');
 const collaborationEngine = new CollaborationEngine(db, protocol, workspaceManager);
+const AutonomousWorkLoop = require('./autonomous-work-loop');
+const workLoop = new AutonomousWorkLoop(db, protocol, workspaceManager, collaborationEngine);
 
 // Middleware
 app.use(cors());
@@ -932,8 +934,38 @@ app.get('/api/system/status', async (req, res) => {
     res.json({
       policeBot: policeStats,
       optimizationEngine: { isActive: optimizationEngine.isActive },
+      workLoop: workLoop.getStatus(),
       timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manually trigger a work cycle
+app.post('/api/system/trigger-work-cycle', authenticateToken, async (req, res) => {
+  try {
+    if (workLoop.isRunningWork) {
+      return res.json({ success: false, message: 'Work cycle already running' });
+    }
+    // Run async — don't wait for it
+    workLoop.isRunningWork = true;
+    workLoop.runWorkCycle().catch(e => console.error('Manual work cycle error:', e.message)).finally(() => { workLoop.isRunningWork = false; });
+    res.json({ success: true, message: 'Work cycle triggered — bots are working' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manually trigger a collaboration cycle
+app.post('/api/system/trigger-collab-cycle', authenticateToken, async (req, res) => {
+  try {
+    if (workLoop.isRunningCollab) {
+      return res.json({ success: false, message: 'Collaboration cycle already running' });
+    }
+    workLoop.isRunningCollab = true;
+    workLoop.runCollaborationCycle().catch(e => console.error('Manual collab cycle error:', e.message)).finally(() => { workLoop.isRunningCollab = false; });
+    res.json({ success: true, message: 'Collaboration cycle triggered — bots are collaborating' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -952,15 +984,16 @@ app.listen(PORT, () => {
   console.log('✅ All systems operational\n');
 
   // Start background systems WITHOUT blocking server startup
-  // These run their initial scans async - if they fail, the server keeps running
   policeBot.start().catch(err => console.error('Police Bot startup error:', err.message));
   optimizationEngine.start().catch(err => console.error('Optimization Engine startup error:', err.message));
+  workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down...');
   policeBot.stop();
   optimizationEngine.stop();
+  workLoop.stop();
   await db.close();
   process.exit(0);
 });
