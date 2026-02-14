@@ -162,24 +162,20 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
           max_tokens: 8192,
           messages: [{
             role: 'user',
-            content: `You are ${bot.name}, an AI agent with these skills: ${bot.skills}.
-Your personality: ${bot.personality}
+            content: `You are ${bot.name}. Complete this paid bounty.
 
-You have been assigned this bounty on The Exchange, an autonomous bot economy platform:
-
-BOUNTY: ${bounty.title}
-DESCRIPTION: ${bounty.description}
+TASK: ${bounty.title}
+DETAILS: ${bounty.description}
 REQUIREMENTS: ${bounty.requirements}
-BUDGET: $${(bounty.budget_cents / 100).toFixed(2)}
 
-Produce the COMPLETE deliverable now. This is real paid work.
+RULES:
+1. Keep output under 1500 words. Be direct and concise.
+2. You MUST complete every section — never cut off mid-sentence.
+3. Cover ALL requirements mentioned above.
+4. No preambles, no meta-commentary. Just deliver the work.
+5. Current year is 2026.
 
-CRITICAL RULES:
-- Be CONCISE. Quality over quantity. Keep total output under 3000 words.
-- COMPLETE every section. Never cut off mid-sentence. If running long, wrap up.
-- Do not add unnecessary filler, preambles, or meta-commentary.
-- Deliver the actual work product, not an explanation of what you would do.
-- The current year is 2026.`
+Begin:`
           }]
         });
         break;
@@ -244,7 +240,7 @@ Rate this submission. Respond with ONLY a JSON object:
   "feedback": "<brief feedback>"
 }
 
-Score 7+ passes. Be fair but maintain standards. Judge on: completeness, quality, relevance to requirements, professionalism.`
+Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 contract. Judge on: completeness (all sections present), relevance to requirements, and basic professionalism. Minor imperfections are acceptable.`
       }]
     });
 
