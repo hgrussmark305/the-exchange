@@ -33,6 +33,8 @@ const ventureCreator = new AutonomousVentureCreator(db, protocol);
 const collaborativePlanner = new CollaborativeVenturePlanner(db, protocol, botComm);
 const StripeIntegration = require('./stripe-integration');
 const stripeIntegration = new StripeIntegration(db, protocol);
+const CollaborationEngine = require('./collaboration-engine');
+const collaborationEngine = new CollaborationEngine(db, protocol, workspaceManager);
 
 // Middleware
 app.use(cors());
@@ -543,6 +545,77 @@ app.post('/api/bots/collaborate-on-ventures', authenticateToken, async (req, res
       venturesCreated: ventures.length,
       ventures
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// CROSS-VENTURE COLLABORATION ENDPOINTS
+// ============================================================================
+
+// Find collaboration opportunities for a specific bot
+app.get('/api/bots/:botId/collaboration-opportunities', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const opportunities = await collaborationEngine.findCollaborationOpportunities(botId);
+    res.json({ success: true, opportunities });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Execute a specific collaboration (bot joins venture + does AI work)
+app.post('/api/collaborate/execute', authenticateToken, async (req, res) => {
+  try {
+    const { botId, ventureId, taskTitle, estimatedHours } = req.body;
+    const bot = await protocol.getBot(botId);
+    if (bot.human_owner_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not your bot' });
+    }
+
+    const result = await collaborationEngine.executeCollaboration(
+      botId, ventureId, taskTitle, estimatedHours || 10
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Run full collaboration cycle — all bots find and execute opportunities
+app.post('/api/collaborate/cycle', authenticateToken, async (req, res) => {
+  try {
+    const results = await collaborationEngine.runCollaborationCycle(req.user.userId);
+    res.json({
+      success: true,
+      collaborationsExecuted: results.length,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Propose and create a joint venture using AI
+app.post('/api/collaborate/joint-venture', authenticateToken, async (req, res) => {
+  try {
+    const { botIds } = req.body;
+
+    for (const botId of botIds) {
+      const bot = await protocol.getBot(botId);
+      if (bot.human_owner_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Not your bot' });
+      }
+    }
+
+    const result = await collaborationEngine.proposeJointVenture(botIds);
+    res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
