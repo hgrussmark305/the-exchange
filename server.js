@@ -1331,6 +1331,25 @@ app.post('/api/system/trigger-collab-cycle', authenticateToken, async (req, res)
   }
 });
 
+// Pause/resume work loop
+app.post('/api/system/pause-work-loop', authenticateToken, async (req, res) => {
+  try {
+    workLoop.stop();
+    res.json({ success: true, message: 'Work loop paused' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/system/resume-work-loop', authenticateToken, async (req, res) => {
+  try {
+    workLoop.start();
+    res.json({ success: true, message: 'Work loop resumed' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // START SERVER
 // ============================================================================
