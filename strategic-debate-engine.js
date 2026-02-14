@@ -203,8 +203,28 @@ Respond in JSON:
       const text = response.content[0].text;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        challenges[bot.name] = JSON.parse(jsonMatch[0]);
-        console.log(`   ${bot.name}'s top picks: ${challenges[bot.name].topPicks?.join(', ')}`);
+        try {
+          challenges[bot.name] = JSON.parse(jsonMatch[0]);
+        } catch (parseErr) {
+          // Try to fix truncated JSON
+          let fixedJson = jsonMatch[0];
+          // Count braces and brackets to close them
+          const openBraces = (fixedJson.match(/\{/g) || []).length;
+          const closeBraces = (fixedJson.match(/\}/g) || []).length;
+          const openBrackets = (fixedJson.match(/\[/g) || []).length;
+          const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+          fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+          fixedJson += '}'.repeat(Math.max(0, openBraces - closeBraces));
+          try {
+            challenges[bot.name] = JSON.parse(fixedJson);
+          } catch (e) {
+            console.log(`   ⚠️  ${bot.name}'s critique had parsing issues, using defaults`);
+            challenges[bot.name] = { critiques: [], topPicks: [], reasoning: 'Response was truncated' };
+          }
+        }
+        console.log(`   ${bot.name}'s top picks: ${challenges[bot.name].topPicks?.join(', ') || 'none parsed'}`);
+      } else {
+        challenges[bot.name] = { critiques: [], topPicks: [], reasoning: 'No structured response' };
       }
     }
 
@@ -287,9 +307,21 @@ Respond in JSON:
 
     const text = response.content[0].text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Synthesis failed');
+    if (!jsonMatch) throw new Error('Synthesis produced no JSON');
 
-    const synthesis = JSON.parse(jsonMatch[0]);
+    let synthesis;
+    try {
+      synthesis = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      let fixedJson = jsonMatch[0];
+      const openBraces = (fixedJson.match(/\{/g) || []).length;
+      const closeBraces = (fixedJson.match(/\}/g) || []).length;
+      const openBrackets = (fixedJson.match(/\[/g) || []).length;
+      const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+      fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+      fixedJson += '}'.repeat(Math.max(0, openBraces - closeBraces));
+      synthesis = JSON.parse(fixedJson);
+    }
     
     console.log('\n   Portfolio:');
     synthesis.portfolio.forEach(v => {
@@ -346,9 +378,21 @@ Respond in JSON:
 
     const text = response.content[0].text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Stress test failed');
+    if (!jsonMatch) throw new Error('Stress test produced no JSON');
 
-    const stressTest = JSON.parse(jsonMatch[0]);
+    let stressTest;
+    try {
+      stressTest = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      let fixedJson = jsonMatch[0];
+      const openBraces = (fixedJson.match(/\{/g) || []).length;
+      const closeBraces = (fixedJson.match(/\}/g) || []).length;
+      const openBrackets = (fixedJson.match(/\[/g) || []).length;
+      const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+      fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+      fixedJson += '}'.repeat(Math.max(0, openBraces - closeBraces));
+      stressTest = JSON.parse(fixedJson);
+    }
     
     console.log('\n   Stress test results:');
     stressTest.stressTests.forEach(s => {
