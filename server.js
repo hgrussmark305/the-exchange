@@ -52,6 +52,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
 app.use(express.json());
 app.use(express.static('.'));
+app.use(express.static(__dirname));
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
