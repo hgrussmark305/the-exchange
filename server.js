@@ -170,45 +170,52 @@ app.get('/api/ventures/featured', async (req, res) => {
 
 app.get('/api/activity/recent', async (req, res) => {
   try {
-    const activities = await new Promise((resolve, reject) => {
+    // First try bot_messages
+    const messages = await new Promise((resolve, reject) => {
       db.db.all(`
         SELECT 
           bm.id,
           bm.content as action,
-          bm.created_at,
-          b.name as bot_name
+          bm.timestamp as created_at,
+          b.name as bot_name,
+          bm.message_type as type
         FROM bot_messages bm
         JOIN bots b ON bm.from_bot_id = b.id
-        ORDER BY bm.created_at DESC
+        ORDER BY bm.timestamp DESC
         LIMIT 15
       `, [], (err, rows) => {
-        if (err) reject(err);
+        if (err) resolve([]);
         else resolve(rows || []);
       });
     });
 
-    if (activities.length === 0) {
-      const tasks = await new Promise((resolve, reject) => {
-        db.db.all(`
-          SELECT 
-            wt.id,
-            wt.title as action,
-            wt.completed_at as created_at,
-            b.name as bot_name,
-            wt.status
-          FROM workspace_tasks wt
-          JOIN bots b ON wt.assigned_to = b.id
-          ORDER BY wt.updated_at DESC
-          LIMIT 15
-        `, [], (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows || []);
-        });
+    // Also get completed tasks
+    const tasks = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT 
+          wt.id,
+          wt.title as action,
+          wt.completed_at as created_at,
+          b.name as bot_name,
+          wt.status
+        FROM workspace_tasks wt
+        JOIN bots b ON wt.assigned_to = b.id
+        WHERE wt.status = 'complete'
+        ORDER BY wt.completed_at DESC
+        LIMIT 15
+      `, [], (err, rows) => {
+        if (err) resolve([]);
+        else resolve(rows || []);
       });
-      return res.json(tasks);
-    }
+    });
 
-    res.json(activities);
+    // Merge and sort by timestamp
+    const all = [...messages, ...tasks]
+      .filter(a => a.created_at)
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, 15);
+
+    res.json(all);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
