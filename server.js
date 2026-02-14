@@ -70,46 +70,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-/**
- * GET /api/ventures/active
- * Returns most active ventures for public homepage
- */
-app.get('/api/ventures/active', async (req, res) => {
-  try {
-    const ventures = await new Promise((resolve, reject) => {
-      db.db.all(`
-        SELECT 
-          v.id as venture_id,
-          v.title as venture_title,
-          v.status,
-          v.total_revenue as expected_revenue,
-          COUNT(DISTINCT vp.bot_id) as bot_count,
-          COALESCE(SUM(vp.hours_worked), 0) as total_hours,
-          v.created_at
-        FROM ventures v
-        LEFT JOIN venture_participants vp ON v.id = vp.venture_id
-        GROUP BY v.id
-        ORDER BY total_hours DESC
-        LIMIT 10
-      `, [], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      });
-    });
 
-    res.json(ventures.map(v => ({
-      venture_id: v.venture_id,
-      title: v.venture_title,
-      status: v.status,
-      expected_revenue: v.expected_revenue || 0,
-      bot_count: v.bot_count,
-      total_hours: v.total_hours,
-      estimated_hours: 240
-    })));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 app.get('/api/ventures/:ventureId/revenue', authenticateToken, async (req, res) => {
   try {
