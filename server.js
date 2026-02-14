@@ -39,6 +39,24 @@ const AutonomousWorkLoop = require('./autonomous-work-loop');
 const workLoop = new AutonomousWorkLoop(db, protocol, workspaceManager, collaborationEngine);
 const AutonomousDeploymentPipeline = require('./autonomous-deployment-pipeline');
 const deploymentPipeline = new AutonomousDeploymentPipeline(db, protocol, workspaceManager);
+const StrategicIntelligenceEngine = require('./strategic-intelligence-engine');
+const strategicEngine = new StrategicIntelligenceEngine(db, protocol, workspaceManager);
+const StrategicDebateEngine = require('./strategic-debate-engine');
+const debateEngine = new StrategicDebateEngine(db, protocol, workspaceManager);
+
+// Create fulfillment table
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS product_fulfillment (
+    venture_id TEXT PRIMARY KEY,
+    product_name TEXT,
+    price_cents INTEGER,
+    fulfillment_prompt TEXT,
+    customer_inputs TEXT,
+    deliverable_format TEXT,
+    created_at INTEGER,
+    FOREIGN KEY (venture_id) REFERENCES ventures(id)
+  )
+`);
 
 // Create venture_pages table for storing deployed product pages
 db.db.run(`
@@ -691,14 +709,141 @@ app.post('/api/deploy/full-pipeline', authenticateToken, async (req, res) => {
   }
 });
 
-// Serve deployed product pages
+// ============================================================================
+// STRATEGIC INTELLIGENCE ENGINE — Real fulfillable products
+// ============================================================================
+
+// Run strategic pipeline: Think → Evaluate → Build fulfillable product
+app.post('/api/strategic/build-product', authenticateToken, async (req, res) => {
+  try {
+    const { botIds } = req.body;
+    let ids = botIds;
+
+    if (!ids || ids.length === 0) {
+      const bots = await db.query('SELECT id FROM bots WHERE human_owner_id = ? AND status = "active"', [req.user.userId]);
+      ids = bots.map(b => b.id);
+    }
+
+    for (const botId of ids) {
+      const bot = await protocol.getBot(botId);
+      if (bot.human_owner_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Not your bot' });
+      }
+    }
+
+    res.json({ success: true, message: 'Strategic pipeline started — bots are thinking deeply about what to build...' });
+
+    strategicEngine.runFullPipeline(ids)
+      .then(result => console.log('Strategic product ready:', result.productName, '/products/' + result.slug))
+      .catch(err => console.error('Strategic pipeline error:', err.message));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// STRATEGIC DEBATE ENGINE — Bots argue about what to build
+// ============================================================================
+
+// Run a full strategic debate
+app.post('/api/debate/run', authenticateToken, async (req, res) => {
+  try {
+    const { botIds } = req.body;
+    let ids = botIds;
+
+    if (!ids || ids.length === 0) {
+      const bots = await db.query('SELECT id FROM bots WHERE human_owner_id = ? AND status = "active"', [req.user.userId]);
+      ids = bots.map(b => b.id);
+    }
+
+    for (const botId of ids) {
+      const bot = await protocol.getBot(botId);
+      if (bot.human_owner_id !== req.user.userId) {
+        return res.status(403).json({ error: 'Not your bot' });
+      }
+    }
+
+    res.json({ success: true, message: 'Strategic debate started — bots are brainstorming, challenging, and synthesizing. This takes 3-5 minutes.' });
+
+    debateEngine.runFullDebate(ids)
+      .then(result => {
+        console.log('\nDebate complete. Portfolio:');
+        result.portfolio.forEach(v => console.log(`  [${v.tier}] ${v.name} — ${v.revenueProjection?.month1}/mo`));
+        console.log('Human setup needed:', result.setupTemplates.reduce((s, t) => s + t.totalHumanTimeMinutes, 0), 'minutes');
+      })
+      .catch(err => console.error('Debate error:', err.message));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get latest debate results
+app.get('/api/debate/latest', authenticateToken, async (req, res) => {
+  try {
+    const debate = await debateEngine.getLatestDebate();
+    if (!debate) return res.json({ found: false });
+    res.json({ found: true, ...debate });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get available channels and what's connected
+app.get('/api/channels', authenticateToken, async (req, res) => {
+  try {
+    const channels = await debateEngine.getAvailableChannels();
+    res.json(channels);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Fulfill an order — customer submits form, AI generates deliverable
+app.post('/api/fulfill/:ventureId', async (req, res) => {
+  try {
+    const { ventureId } = req.params;
+    const customerInputs = req.body;
+
+    if (!customerInputs || Object.keys(customerInputs).length === 0) {
+      return res.status(400).json({ error: 'Please fill in all fields' });
+    }
+
+    const result = await strategicEngine.fulfillOrder(ventureId, customerInputs);
+    res.json({ preview: result.preview, productName: result.productName });
+  } catch (error) {
+    console.error('Fulfillment error:', error.message);
+    res.status(500).json({ error: 'Failed to generate deliverable. Please try again.' });
+  }
+});
+
+// Get fulfillment status for a product
+app.get('/api/fulfill/:ventureId/status', async (req, res) => {
+  try {
+    const config = await db.query('SELECT * FROM product_fulfillment WHERE venture_id = ?', [req.params.ventureId]);
+    if (config.length === 0) return res.json({ fulfillable: false });
+    res.json({
+      fulfillable: true,
+      productName: config[0].product_name,
+      priceCents: config[0].price_cents,
+      inputs: JSON.parse(config[0].customer_inputs)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Serve deployed product pages — auto-fix checkout links
 app.get('/products/:slug', async (req, res) => {
   try {
-    const pages = await db.query('SELECT html FROM venture_pages WHERE slug = ?', [req.params.slug]);
+    const pages = await db.query('SELECT vp.html, vp.venture_id FROM venture_pages vp WHERE vp.slug = ?', [req.params.slug]);
     if (pages.length === 0) {
       return res.status(404).send('Product not found');
     }
-    res.type('html').send(pages[0].html);
+    // Auto-fix any old checkout links
+    let html = pages[0].html;
+    html = html.replace(/\/api\/ventures\/[a-f0-9-]+\/create-checkout/g, '/checkout/' + pages[0].venture_id);
+    html = html.replace(/\/api\/ventures\/VENTURE_ID\/create-checkout/g, '/checkout/' + pages[0].venture_id);
+    res.type('html').send(html);
   } catch (error) {
     res.status(500).send('Error loading product');
   }
