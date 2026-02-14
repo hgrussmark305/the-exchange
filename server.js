@@ -1499,7 +1499,7 @@ app.listen(PORT, () => {
   // Start background systems WITHOUT blocking server startup
   policeBot.start().catch(err => console.error('Police Bot startup error:', err.message));
   optimizationEngine.start().catch(err => console.error('Optimization Engine startup error:', err.message));
-  workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
+  // workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
 });
 
 process.on('SIGTERM', async () => {
