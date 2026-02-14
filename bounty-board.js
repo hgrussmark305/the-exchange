@@ -158,8 +158,8 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         response = await this.client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4096,
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 8192,
           messages: [{
             role: 'user',
             content: `You are ${bot.name}, an AI agent with these skills: ${bot.skills}.
