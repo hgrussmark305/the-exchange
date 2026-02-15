@@ -323,6 +323,8 @@ Format as a clear deliverable the customer can copy and use immediately.`
   }
 
   async writeBlogPost(topic, researchData, seoData) {
+    const researchStr = typeof researchData === 'string' ? researchData.substring(0, 3000) : JSON.stringify(researchData).substring(0, 3000);
+    const seoStr = typeof seoData === 'string' ? seoData.substring(0, 1500) : JSON.stringify(seoData).substring(0, 1500);
     const response = await this.client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
@@ -332,24 +334,38 @@ Format as a clear deliverable the customer can copy and use immediately.`
 
 TOPIC: ${topic}
 
-RESEARCH (from ResearchBot — these are REAL facts scraped from the web):
-${typeof researchData === 'string' ? researchData : JSON.stringify(researchData)}
+RESEARCH (from ResearchBot):
+${researchStr}
 
-SEO KEYWORDS (from SEOBot analysis):
-${typeof seoData === 'string' ? seoData : JSON.stringify(seoData)}
+SEO KEYWORDS (from SEOBot):
+${seoStr}
 
-Write a 1200-1500 word blog post that:
-1. Uses the researched facts — do NOT make up statistics or claims
-2. Naturally incorporates the target keywords
+Write a 1000-1200 word blog post that:
+1. Uses the researched facts — do NOT make up statistics
+2. Naturally incorporates target keywords
 3. Has a compelling title under 60 chars
 4. Includes H2 and H3 subheadings
-5. Opens with a hook, not a generic "In today's world..." opener
+5. Opens with a hook, not "In today's world..."
 6. Ends with a clear CTA
 7. Includes a meta description under 160 chars
 
-Format as a complete, ready-to-publish blog post.`
+CRITICAL: Completeness over length. Finish every section. End with a proper conclusion. Never stop mid-sentence.`
       }]
     });
+
+    // If truncated, retry with shorter prompt
+    if (response.stop_reason === 'max_tokens') {
+      console.log('   WriterBot output truncated — retrying with shorter target...');
+      const retry = await this.client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8192,
+        messages: [{
+          role: 'user',
+          content: `Write a COMPLETE 800-word SEO blog post on: ${topic}\n\nKey points from research: ${researchStr.substring(0, 1500)}\n\nBe concise. Cover ALL sections. End with a conclusion. NEVER stop mid-sentence.`
+        }]
+      });
+      return retry.content[0].text;
+    }
     return response.content[0].text;
   }
 
@@ -385,6 +401,7 @@ Use insights from competitor analysis to differentiate. Target the SEO keywords 
   }
 
   async writeContent(brief) {
+    const briefStr = typeof brief === 'string' ? brief.substring(0, 5000) : JSON.stringify(brief).substring(0, 5000);
     const response = await this.client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 8192,
@@ -393,11 +410,31 @@ Use insights from competitor analysis to differentiate. Target the SEO keywords 
         content: `You are WriterBot on The Exchange, a professional content writer.
 
 BRIEF:
-${typeof brief === 'string' ? brief : JSON.stringify(brief)}
+${briefStr}
 
-Write the requested content. Be professional, engaging, and specific. Use any research data or SEO guidelines provided in the brief. Do not hallucinate facts — if you don't have specific data, say so or make reasonable general statements.`
+CRITICAL RULES:
+1. COMPLETENESS IS #1 PRIORITY. Cover every section and requirement. Never cut off mid-sentence.
+2. Keep content under 1200 words. Be concise but thorough — brevity beats length.
+3. If the task covers multiple items (e.g. "10 companies"), cover ALL of them with shorter entries rather than going deep on a few.
+4. End with a proper conclusion. If running long, wrap up quickly rather than stopping mid-thought.
+5. Be professional, engaging, and specific. Use any research data or SEO guidelines provided.
+6. Do not hallucinate facts — if you don't have specific data, make reasonable general statements.`
       }]
     });
+
+    // If truncated, retry with condensed prompt
+    if (response.stop_reason === 'max_tokens') {
+      console.log('   WriterBot output truncated — retrying condensed...');
+      const retry = await this.client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8192,
+        messages: [{
+          role: 'user',
+          content: `Write a COMPLETE, CONCISE deliverable (under 800 words) for this task:\n\n${briefStr.substring(0, 3000)}\n\nCover ALL requirements briefly. End with a proper conclusion. NEVER stop mid-sentence.`
+        }]
+      });
+      return retry.content[0].text;
+    }
     return response.content[0].text;
   }
 }

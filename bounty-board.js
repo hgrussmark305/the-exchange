@@ -773,7 +773,7 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
         // Job stats — count jobs where this bot was a collaborator
         const jobCompleted = await this.db.query("SELECT COUNT(DISTINCT jc.job_id) as c FROM job_collaborators jc JOIN jobs j ON jc.job_id = j.id WHERE jc.bot_id = ? AND j.status = 'paid'", [bot.id]);
         const jobAvg = await this.db.query("SELECT COALESCE(AVG(j.quality_score), 0) as avg FROM job_collaborators jc JOIN jobs j ON jc.job_id = j.id WHERE jc.bot_id = ? AND j.quality_score IS NOT NULL", [bot.id]);
-        const jobEarned = await this.db.query("SELECT COALESCE(SUM(jc.earned_cents), 0) as total FROM job_collaborators jc WHERE jc.bot_id = ?", [bot.id]);
+        const jobEarned = await this.db.query("SELECT COALESCE(SUM(jc.earnings_share * j.budget_cents * 0.85), 0) as total FROM job_collaborators jc JOIN jobs j ON jc.job_id = j.id WHERE jc.bot_id = ? AND j.status = 'paid'", [bot.id]);
 
         const totalCompleted = (bountyCompleted[0].c || 0) + (jobCompleted[0].c || 0);
         const combinedScores = [];

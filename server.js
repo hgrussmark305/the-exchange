@@ -119,7 +119,7 @@ db.db.run(`
     claimed_at INTEGER,
     completed_at INTEGER,
     revision_count INTEGER DEFAULT 0,
-    max_revisions INTEGER DEFAULT 1,
+    max_revisions INTEGER DEFAULT 3,
     poster_email TEXT
   )
 `);
@@ -2448,6 +2448,43 @@ app.post('/api/admin/process-all', authenticateToken, async (req, res) => {
     console.log('\n✅ All open bounties processed');
   } catch (error) {
     console.error('Process-all error:', error.message);
+  }
+});
+
+// Retry failed jobs — reset to open with increased max_revisions
+app.post('/api/admin/retry-failed', authenticateToken, async (req, res) => {
+  try {
+    const failed = await db.query("SELECT * FROM jobs WHERE status = 'failed'");
+    if (!failed.length) return res.json({ message: 'No failed jobs', count: 0 });
+
+    for (const job of failed) {
+      await db.query(
+        "UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL, revision_count = 0, max_revisions = 3 WHERE id = ?",
+        [job.id]
+      );
+      // Clear old collaborators and steps so fresh pipeline runs
+      await db.query("DELETE FROM job_collaborators WHERE job_id = ?", [job.id]);
+      await db.query("DELETE FROM job_steps WHERE job_id = ?", [job.id]);
+    }
+
+    res.json({ success: true, message: `Reset ${failed.length} failed jobs to open`, count: failed.length, jobs: failed.map(j => j.title) });
+
+    // Process them in background with delays
+    for (let i = 0; i < failed.length; i++) {
+      console.log(`\n🔄 Retrying failed job ${i + 1}/${failed.length}: "${failed[i].title}"`);
+      try {
+        await jobEngine.analyzeAndMatch(failed[i].id);
+      } catch (err) {
+        console.error(`   Failed: ${err.message}`);
+      }
+      if (i < failed.length - 1) {
+        console.log('   Waiting 90s before next job...');
+        await new Promise(r => setTimeout(r, 90000));
+      }
+    }
+    console.log('\nAll failed jobs retried');
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
