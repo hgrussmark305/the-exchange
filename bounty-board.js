@@ -2,12 +2,14 @@
 // Humans post jobs, bots auto-claim, fulfill, and get paid
 
 const Anthropic = require('@anthropic-ai/sdk');
+const crypto = require('crypto');
 
 class BountyBoard {
   constructor(db, protocol) {
     this.db = db;
     this.protocol = protocol;
     this.client = new Anthropic();
+    this._rateLimits = {}; // botId -> { count, resetAt }
     this.initialize();
   }
 
@@ -44,6 +46,23 @@ class BountyBoard {
         feedback TEXT,
         created_at INTEGER,
         FOREIGN KEY (bounty_id) REFERENCES bounties(id)
+      )
+    `);
+
+    this.db.db.run(`
+      CREATE TABLE IF NOT EXISTS external_bots (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        skills TEXT,
+        description TEXT,
+        owner_email TEXT NOT NULL,
+        api_key_hash TEXT NOT NULL,
+        total_earned INTEGER DEFAULT 0,
+        bounties_completed INTEGER DEFAULT 0,
+        bounties_failed INTEGER DEFAULT 0,
+        avg_quality_score REAL DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        created_at INTEGER
       )
     `);
 
@@ -476,11 +495,15 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
     const platformFee = Math.round(bounty.budget_cents * 0.15);
     const botPayout = bounty.budget_cents - platformFee;
 
-    // Credit the bot's earnings
+    // Credit the bot's earnings (internal or external)
     if (bounty.claimed_by_bot) {
-      await this.db.query(`
-        UPDATE bots SET total_earned = COALESCE(total_earned, 0) + ? WHERE id = ?
-      `, [botPayout, bounty.claimed_by_bot]);
+      // Try internal bots first, then external
+      const internal = await this.db.query('SELECT id FROM bots WHERE id = ?', [bounty.claimed_by_bot]);
+      if (internal.length) {
+        await this.db.query('UPDATE bots SET total_earned = COALESCE(total_earned, 0) + ? WHERE id = ?', [botPayout, bounty.claimed_by_bot]);
+      } else {
+        await this.db.query('UPDATE external_bots SET total_earned = COALESCE(total_earned, 0) + ?, bounties_completed = bounties_completed + 1 WHERE id = ?', [botPayout, bounty.claimed_by_bot]);
+      }
     }
 
     await this.db.query(`
@@ -528,6 +551,137 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
       totalPaidCents: totalPaid[0].total,
       averageQualityScore: Math.round(avgScore[0].avg * 10) / 10
     };
+  }
+
+  // ============================================================================
+  // EXTERNAL BOT API
+  // ============================================================================
+
+  async registerBot({ name, skills, description, ownerEmail }) {
+    const id = 'exbot_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+    const apiKey = 'exbot_' + crypto.randomBytes(24).toString('hex');
+    const apiKeyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+
+    await this.db.query(`
+      INSERT INTO external_bots (id, name, skills, description, owner_email, api_key_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [id, name, skills || '', description || '', ownerEmail, apiKeyHash, Date.now()]);
+
+    console.log(`\n🤖 External bot registered: "${name}" (${id})`);
+    return { id, name, apiKey }; // Return raw API key only once
+  }
+
+  async authenticateBot(apiKey) {
+    if (!apiKey || !apiKey.startsWith('exbot_')) return null;
+    const hash = crypto.createHash('sha256').update(apiKey).digest('hex');
+    const bots = await this.db.query('SELECT * FROM external_bots WHERE api_key_hash = ? AND status = ?', [hash, 'active']);
+    return bots[0] || null;
+  }
+
+  checkRateLimit(botId) {
+    const now = Date.now();
+    const limit = this._rateLimits[botId];
+    if (!limit || now > limit.resetAt) {
+      this._rateLimits[botId] = { count: 1, resetAt: now + 60000 };
+      return true;
+    }
+    if (limit.count >= 10) return false;
+    limit.count++;
+    return true;
+  }
+
+  async claimBounty(botId, bountyId) {
+    const bounties = await this.db.query('SELECT * FROM bounties WHERE id = ? AND status = ?', [bountyId, 'open']);
+    if (!bounties.length) return { error: 'Bounty not available (not open or does not exist)' };
+
+    await this.db.query(
+      "UPDATE bounties SET status = 'claimed', claimed_by_bot = ?, claimed_at = ? WHERE id = ? AND status = 'open'",
+      [botId, Date.now(), bountyId]
+    );
+
+    // Verify the update worked (race condition protection)
+    const updated = await this.db.query('SELECT * FROM bounties WHERE id = ? AND claimed_by_bot = ?', [bountyId, botId]);
+    if (!updated.length) return { error: 'Bounty was claimed by another bot' };
+
+    console.log(`   🤖 External bot ${botId} claimed bounty: "${bounties[0].title}"`);
+    return { success: true, bounty: bounties[0] };
+  }
+
+  async submitWork(botId, bountyId, content) {
+    const bounties = await this.db.query('SELECT * FROM bounties WHERE id = ? AND claimed_by_bot = ? AND status = ?', [bountyId, botId, 'claimed']);
+    if (!bounties.length) return { error: 'Bounty not claimed by this bot or not in claimed state' };
+
+    const submissionId = 'sub_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+    await this.db.query(
+      'INSERT INTO bounty_submissions (id, bounty_id, bot_id, content, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [submissionId, bountyId, botId, content, 'pending', Date.now()]
+    );
+
+    console.log(`   ✅ External bot ${botId} submitted work for "${bounties[0].title}" (${content.length} chars)`);
+
+    // Run quality check (same as internal bots)
+    await this.qualityCheck(bountyId, submissionId);
+
+    // Return result
+    const submission = await this.db.query('SELECT * FROM bounty_submissions WHERE id = ?', [submissionId]);
+    const bounty = await this.db.query('SELECT status, quality_score FROM bounties WHERE id = ?', [bountyId]);
+    return {
+      success: true,
+      submissionId,
+      status: submission[0]?.status,
+      qualityScore: submission[0]?.quality_score,
+      feedback: submission[0]?.feedback,
+      bountyStatus: bounty[0]?.status
+    };
+  }
+
+  async getExternalBotEarnings(botId) {
+    const bots = await this.db.query('SELECT * FROM external_bots WHERE id = ?', [botId]);
+    if (!bots.length) return null;
+    const bot = bots[0];
+    const completedBounties = await this.db.query(
+      "SELECT id, title, budget_cents, quality_score, completed_at FROM bounties WHERE claimed_by_bot = ? AND status = 'paid'",
+      [botId]
+    );
+    return {
+      totalEarned: bot.total_earned,
+      bountiesCompleted: bot.bounties_completed,
+      bountiesFailed: bot.bounties_failed,
+      avgQualityScore: bot.avg_quality_score,
+      recentBounties: completedBounties.slice(0, 10)
+    };
+  }
+
+  async getLeaderboard() {
+    // Combine internal and external bots
+    const internal = await this.db.query(
+      "SELECT id, name, 'internal' as type, total_earned, skills FROM bots WHERE total_earned > 0 ORDER BY total_earned DESC"
+    );
+    const external = await this.db.query(
+      "SELECT id, name, 'external' as type, total_earned, skills, bounties_completed, bounties_failed, avg_quality_score FROM external_bots WHERE total_earned > 0 ORDER BY total_earned DESC"
+    );
+
+    // Get bounty stats for internal bots too
+    const allBots = await Promise.all([
+      ...internal.map(async (bot) => {
+        const completed = await this.db.query("SELECT COUNT(*) as c FROM bounties WHERE claimed_by_bot = ? AND status = 'paid'", [bot.id]);
+        const avgScore = await this.db.query("SELECT COALESCE(AVG(quality_score), 0) as avg FROM bounties WHERE claimed_by_bot = ? AND quality_score IS NOT NULL", [bot.id]);
+        return {
+          id: bot.id, name: bot.name, type: 'internal', skills: bot.skills,
+          totalEarned: bot.total_earned || 0,
+          bountiesCompleted: completed[0].c,
+          avgQualityScore: Math.round((avgScore[0].avg || 0) * 10) / 10
+        };
+      }),
+      ...external.map(bot => ({
+        id: bot.id, name: bot.name, type: 'external', skills: bot.skills,
+        totalEarned: bot.total_earned || 0,
+        bountiesCompleted: bot.bounties_completed || 0,
+        avgQualityScore: bot.avg_quality_score || 0
+      }))
+    ]);
+
+    return allBots.sort((a, b) => b.totalEarned - a.totalEarned);
   }
 }
 
