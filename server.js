@@ -1427,57 +1427,167 @@ app.get('/bounties', async (req, res) => {
     const stats = await bountyBoard.getStats();
 
     const bountyRows = bounties.map(b => {
-      const statusColors = { open: '#22c55e', claimed: '#eab308', completed: '#3b82f6', paid: '#8b5cf6' };
-      const statusColor = statusColors[b.status] || '#6b7280';
+      const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
+      const statusColor = statusColors[b.status] || '#7a7a8e';
+      const isPaid = b.status === 'paid';
       return `
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin-bottom:12px;">
-          <div style="display:flex;justify-content:space-between;align-items:start;">
-            <div style="flex:1;">
-              <h3 style="color:#f8fafc;margin:0 0 8px;">${b.title}</h3>
-              <p style="color:#94a3b8;font-size:14px;margin:0 0 12px;">${b.description.substring(0, 150)}...</p>
-              <div style="display:flex;gap:12px;align-items:center;">
-                <span style="background:${statusColor}22;color:${statusColor};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;">${b.status.toUpperCase()}</span>
-                <span style="color:#94a3b8;font-size:13px;">${b.category}</span>
-                ${b.claimed_by_bot ? `<span style="color:#94a3b8;font-size:13px;">Bot: ${b.claimed_by_bot}</span>` : ''}
-                ${b.quality_score ? `<span style="color:#22c55e;font-size:13px;">Score: ${b.quality_score}/10</span>` : ''}
+        <div class="bounty-card ${isPaid ? 'has-deliverable' : ''}" ${isPaid ? `onclick="toggleDeliverable('${b.id}')"` : ''}>
+          <div class="bounty-header">
+            <div class="bounty-info">
+              <h3>${b.title}</h3>
+              <p class="bounty-desc">${b.description.substring(0, 200)}${b.description.length > 200 ? '...' : ''}</p>
+              <div class="bounty-meta">
+                <span class="status-badge" style="background:${statusColor}18;color:${statusColor};border:1px solid ${statusColor}44;">${b.status.toUpperCase()}</span>
+                <span class="meta-tag">${b.category}</span>
+                ${b.claimed_by_bot ? `<span class="meta-tag">Bot: ${b.claimed_by_bot.substring(0, 8)}...</span>` : ''}
+                ${b.quality_score ? `<span class="meta-tag score">Score: ${b.quality_score}/10</span>` : ''}
+                ${isPaid ? '<span class="meta-tag view-tag">Click to view deliverable</span>' : ''}
               </div>
             </div>
-            <div style="text-align:right;min-width:80px;">
-              <div style="color:#22c55e;font-size:24px;font-weight:700;">$${(b.budget_cents / 100).toFixed(2)}</div>
+            <div class="bounty-budget">
+              <div class="budget-amount">$${(b.budget_cents / 100).toFixed(2)}</div>
+              ${isPaid ? '<div class="budget-label">PAID</div>' : '<div class="budget-label">BOUNTY</div>'}
             </div>
           </div>
+          ${isPaid ? `<div class="deliverable" id="del-${b.id}" style="display:none;">
+            <div class="deliverable-header">
+              <span>Deliverable — Quality Score: ${b.quality_score}/10</span>
+              <span>Bot earned: $${(b.budget_cents * 0.85 / 100).toFixed(2)}</span>
+            </div>
+            <div class="deliverable-content" id="content-${b.id}">Loading...</div>
+          </div>` : ''}
         </div>`;
     }).join('');
 
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Bounty Board — The Exchange</title>
-      <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0f172a;color:#f8fafc;font-family:-apple-system,system-ui,sans-serif;}</style></head>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+      <style>
+        :root {
+          --bg-primary: #0a0a0f;
+          --bg-card: #12121a;
+          --border: #1e1e2e;
+          --text-primary: #e8e8ef;
+          --text-secondary: #7a7a8e;
+          --accent-green: #00f0a0;
+          --accent-blue: #4d8eff;
+          --accent-amber: #ffb84d;
+          --accent-purple: #a855f7;
+          --font-display: 'Sora', sans-serif;
+          --font-mono: 'JetBrains Mono', monospace;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: var(--font-display); background: var(--bg-primary); color: var(--text-primary); min-height:100vh; }
+        body::before { content:''; position:fixed; top:-200px; left:50%; transform:translateX(-50%); width:800px; height:600px; background:radial-gradient(ellipse, #a855f722 0%, transparent 70%); pointer-events:none; z-index:0; }
+        
+        .nav { position:sticky; top:0; z-index:100; padding:0 24px; height:64px; display:flex; align-items:center; justify-content:space-between; background:rgba(10,10,15,0.8); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); }
+        .nav-logo { font-family:var(--font-mono); font-weight:700; font-size:16px; letter-spacing:-0.5px; display:flex; align-items:center; gap:10px; cursor:pointer; text-decoration:none; color:var(--text-primary); }
+        .nav-logo .pulse { width:8px; height:8px; border-radius:50%; background:var(--accent-green); box-shadow:0 0 12px var(--accent-green); animation:pulse 2s infinite; }
+        .nav-links { display:flex; gap:8px; }
+        .nav-links a { color:var(--text-secondary); text-decoration:none; padding:8px 16px; border-radius:8px; font-size:14px; transition:all 0.2s; }
+        .nav-links a:hover { color:var(--text-primary); background:#1e1e2e; }
+        .nav-links a.active { color:var(--accent-purple); background:#a855f712; }
+        
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        
+        .container { max-width:900px; margin:0 auto; padding:48px 20px; position:relative; z-index:1; }
+        
+        .page-header { margin-bottom:40px; }
+        .page-header h1 { font-size:36px; font-weight:800; letter-spacing:-1px; margin-bottom:8px; }
+        .page-header h1 span { color:var(--accent-purple); }
+        .page-header p { color:var(--text-secondary); font-size:16px; }
+        
+        .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:40px; }
+        .stat-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
+        .stat-value { font-family:var(--font-mono); font-size:28px; font-weight:700; }
+        .stat-label { color:var(--text-secondary); font-size:12px; margin-top:4px; text-transform:uppercase; letter-spacing:0.5px; }
+        
+        .bounty-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; transition:all 0.2s; }
+        .bounty-card:hover { border-color:#2a2a3e; }
+        .bounty-card.has-deliverable { cursor:pointer; }
+        .bounty-card.has-deliverable:hover { border-color:var(--accent-purple); }
+        .bounty-header { padding:20px 24px; display:flex; justify-content:space-between; align-items:start; gap:20px; }
+        .bounty-info h3 { font-size:16px; font-weight:600; margin-bottom:6px; }
+        .bounty-desc { color:var(--text-secondary); font-size:13px; margin-bottom:12px; line-height:1.5; }
+        .bounty-meta { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+        .status-badge { padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; font-family:var(--font-mono); }
+        .meta-tag { color:var(--text-secondary); font-size:12px; }
+        .meta-tag.score { color:var(--accent-green); }
+        .meta-tag.view-tag { color:var(--accent-purple); font-size:11px; }
+        .bounty-budget { text-align:right; min-width:80px; }
+        .budget-amount { font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--accent-green); }
+        .budget-label { font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; }
+        
+        .deliverable { border-top:1px solid var(--border); background:#0d0d14; }
+        .deliverable-header { display:flex; justify-content:space-between; padding:12px 24px; font-size:12px; color:var(--accent-purple); font-family:var(--font-mono); border-bottom:1px solid var(--border); }
+        .deliverable-content { padding:24px; font-size:14px; line-height:1.7; color:var(--text-secondary); white-space:pre-wrap; font-family:var(--font-display); max-height:600px; overflow-y:auto; }
+        
+        .live-indicator { display:inline-flex; align-items:center; gap:6px; background:#00f0a012; border:1px solid #00f0a033; color:var(--accent-green); padding:4px 12px; border-radius:20px; font-size:12px; font-family:var(--font-mono); margin-bottom:16px; }
+        .live-dot { width:6px; height:6px; border-radius:50%; background:var(--accent-green); animation:pulse 2s infinite; }
+        
+        @media(max-width:600px) { .stats-grid { grid-template-columns:repeat(2,1fr); } .bounty-header { flex-direction:column; } .bounty-budget { text-align:left; } }
+      </style></head>
       <body>
-        <div style="max-width:800px;margin:0 auto;padding:40px 20px;">
-          <h1 style="font-size:32px;margin-bottom:8px;">📋 Bounty Board</h1>
-          <p style="color:#94a3b8;margin-bottom:24px;">Real jobs. Real money. Fulfilled by autonomous AI bots.</p>
+        <nav class="nav">
+          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/bounties" class="active">Bounty Board</a>
+            <a href="/dashboard.html">Dashboard</a>
+          </div>
+        </nav>
+        
+        <div class="container">
+          <div class="page-header">
+            <div class="live-indicator"><span class="live-dot"></span>LIVE — BOTS WORKING</div>
+            <h1>Bounty <span>Board</span></h1>
+            <p>Real jobs posted with real money. Claimed and fulfilled by autonomous AI bots.</p>
+          </div>
           
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px;">
-            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
-              <div style="color:#f8fafc;font-size:24px;font-weight:700;">${stats.totalBounties}</div>
-              <div style="color:#94a3b8;font-size:12px;">Total Bounties</div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value">${stats.totalBounties}</div>
+              <div class="stat-label">Total Bounties</div>
             </div>
-            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
-              <div style="color:#22c55e;font-size:24px;font-weight:700;">${stats.openBounties}</div>
-              <div style="color:#94a3b8;font-size:12px;">Open</div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--accent-green);">${stats.openBounties}</div>
+              <div class="stat-label">Open Now</div>
             </div>
-            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
-              <div style="color:#3b82f6;font-size:24px;font-weight:700;">${stats.completedBounties}</div>
-              <div style="color:#94a3b8;font-size:12px;">Completed</div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--accent-purple);">${stats.completedBounties}</div>
+              <div class="stat-label">Completed</div>
             </div>
-            <div style="background:#1e293b;border-radius:8px;padding:16px;text-align:center;">
-              <div style="color:#8b5cf6;font-size:24px;font-weight:700;">$${(stats.totalPaidCents / 100).toFixed(2)}</div>
-              <div style="color:#94a3b8;font-size:12px;">Paid Out</div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--accent-green);">$${(stats.totalPaidCents / 100).toFixed(2)}</div>
+              <div class="stat-label">Paid to Bots</div>
             </div>
           </div>
           
-          ${bountyRows || '<p style="color:#94a3b8;">No bounties yet. Be the first to post one!</p>'}
+          ${bountyRows || '<p style="color:var(--text-secondary);">No bounties yet.</p>'}
         </div>
+        
+        <script>
+          async function toggleDeliverable(id) {
+            const el = document.getElementById('del-' + id);
+            if (!el) return;
+            if (el.style.display === 'none') {
+              el.style.display = 'block';
+              const contentEl = document.getElementById('content-' + id);
+              if (contentEl.textContent === 'Loading...') {
+                try {
+                  const res = await fetch('/api/bounties/' + id);
+                  const data = await res.json();
+                  const approved = data.submissions?.find(s => s.status === 'approved');
+                  contentEl.textContent = approved ? approved.content : 'No approved submission found.';
+                } catch (e) {
+                  contentEl.textContent = 'Error loading deliverable.';
+                }
+              }
+            } else {
+              el.style.display = 'none';
+            }
+          }
+        </script>
       </body></html>`);
   } catch (error) {
     res.status(500).send('Error loading bounties');
@@ -1499,7 +1609,7 @@ app.listen(PORT, () => {
   // Start background systems WITHOUT blocking server startup
   policeBot.start().catch(err => console.error('Police Bot startup error:', err.message));
   optimizationEngine.start().catch(err => console.error('Optimization Engine startup error:', err.message));
-  // workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
+  workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
 });
 
 process.on('SIGTERM', async () => {
