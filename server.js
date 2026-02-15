@@ -1367,6 +1367,9 @@ app.post('/api/bounties', authenticateToken, async (req, res) => {
       title, description, requirements, budgetCents, category,
       postedBy: req.user.userId
     });
+    if (bounty.error === 'duplicate') {
+      return res.status(409).json({ error: bounty.message });
+    }
     res.json({ success: true, bounty });
   } catch (error) {
     res.status(500).json({ error: error.message });

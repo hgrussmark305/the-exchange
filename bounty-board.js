@@ -49,36 +49,82 @@ class BountyBoard {
 
     console.log('\n📋 BOUNTY BOARD initialized');
 
-    // Recovery: retry any bounties stuck in 'claimed' status (failed mid-pipeline)
-    this.recoverStuckBounties();
+    // Startup cleanup and recovery
+    this.startupRecovery();
   }
 
-  async recoverStuckBounties() {
+  async startupRecovery() {
     try {
+      // Step 1: Remove duplicate bounties (keep the most advanced copy per title)
+      await this.deduplicateBounties();
+
+      // Step 2: Retry bounties stuck in 'claimed' (fulfillment failed mid-pipeline)
       const stuckBounties = await this.db.query(
         "SELECT * FROM bounties WHERE status = 'claimed' AND claimed_by_bot IS NOT NULL"
       );
-      if (!stuckBounties.length) return;
 
-      console.log(`\n🔄 Recovering ${stuckBounties.length} stuck bounties...`);
+      // Step 3: Re-trigger matching for idle 'open' bounties
+      const openBounties = await this.db.query(
+        "SELECT * FROM bounties WHERE status = 'open'"
+      );
 
-      for (let i = 0; i < stuckBounties.length; i++) {
-        const bounty = stuckBounties[i];
+      const toRecover = [
+        ...stuckBounties.map(b => ({ ...b, action: 'fulfill' })),
+        ...openBounties.map(b => ({ ...b, action: 'match' }))
+      ];
+
+      if (!toRecover.length) return;
+      console.log(`\n🔄 Recovering ${stuckBounties.length} stuck + ${openBounties.length} open bounties...`);
+
+      for (let i = 0; i < toRecover.length; i++) {
+        const bounty = toRecover[i];
         const delayMs = i * 90000; // 90s apart to avoid rate limits
         setTimeout(() => {
-          console.log(`   🔄 Retrying: "${bounty.title}"`);
-          this.autoFulfill(bounty.id, bounty.claimed_by_bot).catch(err => {
-            console.error(`   ❌ Recovery failed for "${bounty.title}": ${err.message}`);
-            // Re-open so it can be matched again
-            this.db.query(
-              "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
-              [bounty.id]
-            ).catch(() => {});
-          });
+          if (bounty.action === 'fulfill') {
+            console.log(`   🔄 Retrying fulfillment: "${bounty.title}"`);
+            this.autoFulfill(bounty.id, bounty.claimed_by_bot).catch(err => {
+              console.error(`   ❌ Recovery failed for "${bounty.title}": ${err.message}`);
+              this.db.query(
+                "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
+                [bounty.id]
+              ).catch(() => {});
+            });
+          } else {
+            console.log(`   🔄 Re-matching: "${bounty.title}"`);
+            this.autoMatch(bounty.id).catch(err => {
+              console.error(`   ❌ Re-match failed for "${bounty.title}": ${err.message}`);
+            });
+          }
         }, delayMs);
       }
     } catch (err) {
-      console.error('Recovery scan error:', err.message);
+      console.error('Startup recovery error:', err.message);
+    }
+  }
+
+  async deduplicateBounties() {
+    // Rank: paid > completed > claimed > open. Keep the most advanced copy per title.
+    const statusRank = { paid: 4, completed: 3, claimed: 2, open: 1 };
+    const all = await this.db.query('SELECT id, title, status FROM bounties ORDER BY created_at ASC');
+
+    const bestByTitle = {};
+    for (const b of all) {
+      const rank = statusRank[b.status] || 0;
+      if (!bestByTitle[b.title] || rank > (statusRank[bestByTitle[b.title].status] || 0)) {
+        bestByTitle[b.title] = b;
+      }
+    }
+
+    const keepIds = new Set(Object.values(bestByTitle).map(b => b.id));
+    const dupes = all.filter(b => !keepIds.has(b.id));
+
+    if (!dupes.length) return;
+    console.log(`\n🧹 Removing ${dupes.length} duplicate bounties...`);
+
+    for (const dupe of dupes) {
+      await this.db.query('DELETE FROM bounty_submissions WHERE bounty_id = ?', [dupe.id]);
+      await this.db.query('DELETE FROM bounties WHERE id = ?', [dupe.id]);
+      console.log(`   Removed dupe: "${dupe.title}" (${dupe.status})`);
     }
   }
 
@@ -86,8 +132,18 @@ class BountyBoard {
   // POST A BOUNTY
   // ============================================================================
   async postBounty({ title, description, requirements, budgetCents, category, postedBy, postedByBot }) {
+    // Reject duplicate titles posted within the last hour
+    const recent = await this.db.query(
+      "SELECT id FROM bounties WHERE title = ? AND created_at > ?",
+      [title, Date.now() - 3600000]
+    );
+    if (recent.length) {
+      console.log(`   ⚠️ Duplicate bounty rejected: "${title}"`);
+      return { error: 'duplicate', message: `Bounty "${title}" was already posted recently` };
+    }
+
     const id = 'bounty_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    
+
     await this.db.query(`
       INSERT INTO bounties (id, title, description, requirements, budget_cents, category, status, posted_by, posted_by_bot, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
