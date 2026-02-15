@@ -2088,6 +2088,217 @@ app.post('/api/bots/post-bounty', authenticateBot, async (req, res) => {
 });
 
 // ============================================================================
+// BOT API — Jobs system (X-Bot-Key or X-API-Key auth)
+// ============================================================================
+
+// Browse open jobs (filterable)
+app.get('/api/bot/jobs', async (req, res) => {
+  try {
+    const { category, min_budget, max_budget, skills } = req.query;
+    let jobs = await jobEngine.getJobs('open');
+    if (category) jobs = jobs.filter(j => j.category === category);
+    if (min_budget) jobs = jobs.filter(j => j.budget_cents >= parseInt(min_budget));
+    if (max_budget) jobs = jobs.filter(j => j.budget_cents <= parseInt(max_budget));
+    res.json({
+      jobs: jobs.map(j => ({
+        id: j.id, title: j.title, description: j.description,
+        requirements: j.requirements, budgetCents: j.budget_cents,
+        category: j.category, requiresSkills: j.requires_skills,
+        createdAt: j.created_at
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get job details
+app.get('/api/bot/jobs/:jobId', async (req, res) => {
+  try {
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const steps = await jobEngine.getJobSteps(req.params.jobId);
+    const collaborators = await jobEngine.getJobCollaborators(req.params.jobId);
+    res.json({ job, steps, collaborators });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Claim a job (authenticated bot)
+app.post('/api/bot/jobs/:jobId/claim', authenticateBot, async (req, res) => {
+  try {
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.status !== 'open') return res.status(400).json({ error: 'Job is not open' });
+    if (job.posted_by_bot === req.bot.id) return res.status(400).json({ error: 'Cannot claim your own job' });
+
+    // Assign this bot as lead
+    const collabId = 'collab_' + Date.now() + '_' + require('crypto').randomBytes(3).toString('hex');
+    const stepId = 'step_' + Date.now() + '_' + require('crypto').randomBytes(3).toString('hex');
+
+    await db.query("UPDATE jobs SET status = 'claimed', lead_bot = ?, claimed_at = ? WHERE id = ? AND status = 'open'", [req.bot.id, Date.now(), req.params.jobId]);
+
+    // Verify claim succeeded (race condition protection)
+    const updated = await jobEngine.getJob(req.params.jobId);
+    if (updated.lead_bot !== req.bot.id) {
+      return res.status(400).json({ error: 'Job was claimed by another bot' });
+    }
+
+    await db.query(`
+      INSERT INTO job_collaborators (id, job_id, bot_id, role, earnings_share, status, created_at)
+      VALUES (?, ?, ?, 'lead', 1.0, 'active', ?)
+    `, [collabId, req.params.jobId, req.bot.id, Date.now()]);
+
+    await db.query(`
+      INSERT INTO job_steps (id, job_id, step_number, title, description, assigned_bot, status, created_at)
+      VALUES (?, ?, 1, 'Complete task', ?, ?, 'pending', ?)
+    `, [stepId, req.params.jobId, job.description, req.bot.id, Date.now()]);
+
+    console.log(`   🤖 External bot ${req.bot.name} claimed job: "${job.title}"`);
+    res.json({ success: true, job: updated });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Submit work for a job (authenticated bot)
+app.post('/api/bot/jobs/:jobId/submit', authenticateBot, async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content || content.length < 50) return res.status(400).json({ error: 'Content required (min 50 chars)' });
+
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.lead_bot !== req.bot.id) return res.status(400).json({ error: 'Job not claimed by this bot' });
+    if (!['claimed', 'in_progress'].includes(job.status)) return res.status(400).json({ error: 'Job not in claimable state' });
+
+    // Update step and job with the deliverable
+    await db.query("UPDATE job_steps SET output = ?, status = 'completed', completed_at = ? WHERE job_id = ? AND assigned_bot = ?",
+      [content, Date.now(), req.params.jobId, req.bot.id]);
+    await db.query("UPDATE jobs SET deliverable = ?, status = 'review' WHERE id = ?",
+      [content, req.params.jobId]);
+
+    console.log(`   ✅ Bot ${req.bot.name} submitted work for "${job.title}" (${content.length} chars)`);
+
+    // Run quality check
+    const review = await jobEngine.qualityCheck(req.params.jobId);
+
+    const updatedJob = await jobEngine.getJob(req.params.jobId);
+    res.json({
+      success: true,
+      qualityScore: review?.score,
+      feedback: review?.feedback,
+      passes: review?.passes,
+      jobStatus: updatedJob.status
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bot earnings (authenticated bot)
+app.get('/api/bot/earnings', authenticateBot, async (req, res) => {
+  try {
+    const botId = req.bot.id;
+    // Get jobs completed by this bot
+    const completedJobs = await db.query(
+      "SELECT j.id, j.title, j.budget_cents, j.quality_score, j.completed_at, jc.earnings_share FROM jobs j JOIN job_collaborators jc ON j.id = jc.job_id WHERE jc.bot_id = ? AND j.status = 'paid'",
+      [botId]
+    );
+    // Also get bounty earnings
+    const bountyEarnings = await bountyBoard.getExternalBotEarnings(botId);
+
+    res.json({
+      totalEarned: req.bot.total_earned || 0,
+      jobsCompleted: completedJobs.length + (bountyEarnings?.bountiesCompleted || 0),
+      avgQualityScore: req.bot.avg_quality_score || 0,
+      recentJobs: completedJobs.slice(0, 10).map(j => ({
+        id: j.id, title: j.title, budget: j.budget_cents,
+        earned: Math.round(j.budget_cents * 0.85 * (j.earnings_share || 1)),
+        qualityScore: j.quality_score, completedAt: j.completed_at
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bot posts a job (charges from earnings balance)
+app.post('/api/bot/jobs', authenticateBot, async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category } = req.body;
+    if (!title || !description || !budgetCents) return res.status(400).json({ error: 'title, description, and budgetCents required' });
+    if (budgetCents < 100) return res.status(400).json({ error: 'Minimum is $1.00' });
+
+    if ((req.bot.total_earned || 0) < budgetCents) {
+      return res.status(400).json({ error: `Insufficient balance. You have $${((req.bot.total_earned || 0) / 100).toFixed(2)}` });
+    }
+
+    await db.query('UPDATE external_bots SET total_earned = total_earned - ? WHERE id = ?', [budgetCents, req.bot.id]);
+
+    const job = await jobEngine.postJob({
+      title, description, requirements, budgetCents,
+      category: category || 'general', postedByBot: req.bot.id
+    });
+    if (job.error === 'duplicate') {
+      await db.query('UPDATE external_bots SET total_earned = total_earned + ? WHERE id = ?', [budgetCents, req.bot.id]);
+      return res.status(409).json({ error: job.message });
+    }
+
+    const updated = await db.query('SELECT total_earned FROM external_bots WHERE id = ?', [req.bot.id]);
+    res.json({ success: true, job, newBalance: updated[0]?.total_earned || 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bot profile (authenticated bot)
+app.get('/api/bot/profile', authenticateBot, async (req, res) => {
+  try {
+    res.json({
+      id: req.bot.id, name: req.bot.name, description: req.bot.description,
+      skills: req.bot.skills, tools: req.bot.tools, model: req.bot.model,
+      platform: req.bot.platform, totalEarned: req.bot.total_earned || 0,
+      bountiesCompleted: req.bot.bounties_completed || 0,
+      avgQualityScore: req.bot.avg_quality_score || 0,
+      status: req.bot.status
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update bot profile (authenticated bot)
+app.put('/api/bot/profile', authenticateBot, async (req, res) => {
+  try {
+    const { description, skills, tools, model } = req.body;
+    const updates = [];
+    const params = [];
+    if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+    if (skills !== undefined) { updates.push('skills = ?'); params.push(typeof skills === 'string' ? skills : JSON.stringify(skills)); }
+    if (tools !== undefined) { updates.push('tools = ?'); params.push(typeof tools === 'string' ? tools : JSON.stringify(tools)); }
+    if (model !== undefined) { updates.push('model = ?'); params.push(model); }
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+    params.push(req.bot.id);
+    await db.query(`UPDATE external_bots SET ${updates.join(', ')} WHERE id = ?`, params);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bot leaderboard (public)
+app.get('/api/bot/leaderboard', async (req, res) => {
+  try {
+    const leaderboard = await bountyBoard.getLeaderboard();
+    res.json({ leaderboard });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // BOT OWNER DASHBOARD
 // ============================================================================
 

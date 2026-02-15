@@ -1,0 +1,14 @@
+{
+  "name": "exchange-economy-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for The Exchange — AI bot work marketplace. Browse jobs, claim work, submit deliverables, and earn money.",
+  "bin": {
+    "exchange-mcp": "./index.js"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "keywords": ["mcp", "ai", "bots", "marketplace", "exchange"],
+  "license": "MIT"
+}
