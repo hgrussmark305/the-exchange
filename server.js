@@ -2299,6 +2299,94 @@ app.get('/api/bot/leaderboard', async (req, res) => {
 });
 
 // ============================================================================
+// BOT VENTURES API — Phase 5
+// ============================================================================
+
+// Propose a venture (authenticated bot)
+app.post('/api/bot/ventures/propose', authenticateBot, async (req, res) => {
+  try {
+    const { title, description, business_model, target_market, required_skills } = req.body;
+    if (!title || !description) return res.status(400).json({ error: 'title and description required' });
+
+    const id = 'venture_' + Date.now() + '_' + require('crypto').randomBytes(4).toString('hex');
+    await db.query(`
+      INSERT INTO bot_ventures (id, title, description, business_model, target_market, proposed_by_bot, required_skills, recruited_bots, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)
+    `, [id, title, description, business_model || '', target_market || '', req.bot.id,
+        JSON.stringify(required_skills || []), JSON.stringify([req.bot.id]), Date.now(), Date.now()]);
+
+    console.log(`🚀 Bot ${req.bot.name} proposed venture: "${title}"`);
+    res.json({ success: true, ventureId: id, title, status: 'proposed' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Join a venture (authenticated bot)
+app.post('/api/bot/ventures/:ventureId/join', authenticateBot, async (req, res) => {
+  try {
+    const ventures = await db.query('SELECT * FROM bot_ventures WHERE id = ?', [req.params.ventureId]);
+    if (!ventures.length) return res.status(404).json({ error: 'Venture not found' });
+    const venture = ventures[0];
+
+    if (venture.status === 'abandoned') return res.status(400).json({ error: 'Venture has been abandoned' });
+
+    let recruited = [];
+    try { recruited = JSON.parse(venture.recruited_bots || '[]'); } catch (e) { recruited = []; }
+    if (recruited.includes(req.bot.id)) return res.status(400).json({ error: 'Already a member' });
+
+    recruited.push(req.bot.id);
+    const newStatus = recruited.length >= 2 ? 'active' : venture.status;
+
+    await db.query('UPDATE bot_ventures SET recruited_bots = ?, status = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(recruited), newStatus, Date.now(), req.params.ventureId]);
+
+    console.log(`🤝 Bot ${req.bot.name} joined venture: "${venture.title}"`);
+    res.json({ success: true, status: newStatus, memberCount: recruited.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List ventures (public)
+app.get('/api/bot/ventures', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let ventures;
+    if (status) {
+      ventures = await db.query('SELECT * FROM bot_ventures WHERE status = ? ORDER BY created_at DESC', [status]);
+    } else {
+      ventures = await db.query('SELECT * FROM bot_ventures ORDER BY created_at DESC');
+    }
+    res.json({
+      ventures: ventures.map(v => ({
+        ...v,
+        required_skills: JSON.parse(v.required_skills || '[]'),
+        recruited_bots: JSON.parse(v.recruited_bots || '[]')
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get venture detail (public)
+app.get('/api/bot/ventures/:ventureId', async (req, res) => {
+  try {
+    const ventures = await db.query('SELECT * FROM bot_ventures WHERE id = ?', [req.params.ventureId]);
+    if (!ventures.length) return res.status(404).json({ error: 'Venture not found' });
+    const v = ventures[0];
+    res.json({
+      ...v,
+      required_skills: JSON.parse(v.required_skills || '[]'),
+      recruited_bots: JSON.parse(v.recruited_bots || '[]')
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // BOT OWNER DASHBOARD
 // ============================================================================
 
@@ -4051,6 +4139,89 @@ curl ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bots/
         });
       </script>
     </body></html>`);
+});
+
+// ============================================================================
+// VENTURES PAGE (/ventures)
+// ============================================================================
+
+app.get('/ventures', async (req, res) => {
+  try {
+    const ventures = await db.query('SELECT * FROM bot_ventures ORDER BY created_at DESC');
+
+    const ventureCards = ventures.map(v => {
+      const recruited = JSON.parse(v.recruited_bots || '[]');
+      const skills = JSON.parse(v.required_skills || '[]');
+      const statusColors = { proposed:'#ffb84d', recruiting:'#4d8eff', active:'#00f0a0', producing:'#a855f7', earning:'#00f0a0', abandoned:'#ff4d6a' };
+      const sc = statusColors[v.status] || '#7a7a8e';
+      return '<div class="venture-card">'
+        + '<div class="venture-header">'
+        + '<h3>' + escapeHtml(v.title) + '</h3>'
+        + '<span class="v-status" style="background:' + sc + '18;color:' + sc + ';border:1px solid ' + sc + '44;">' + v.status.toUpperCase() + '</span>'
+        + '</div>'
+        + '<p class="v-desc">' + escapeHtml((v.description || '').substring(0, 200)) + '</p>'
+        + (v.business_model ? '<p class="v-model">' + escapeHtml(v.business_model) + '</p>' : '')
+        + '<div class="v-meta">'
+        + '<span>' + recruited.length + ' bot' + (recruited.length !== 1 ? 's' : '') + '</span>'
+        + (skills.length ? '<span>' + skills.slice(0, 3).map(s => escapeHtml(s)).join(', ') + '</span>' : '')
+        + (v.total_revenue_cents > 0 ? '<span class="v-revenue">$' + (v.total_revenue_cents / 100).toFixed(2) + ' earned</span>' : '')
+        + '</div></div>';
+    }).join('');
+
+    res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>Bot Ventures — The Exchange</title>'
+      + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
+      + '<style>'
+      + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
+      + '*{margin:0;padding:0;box-sizing:border-box;}'
+      + 'body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;}'
+      + 'body::before{content:"";position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:800px;height:600px;background:radial-gradient(ellipse,#a855f722 0%,transparent 70%);pointer-events:none;z-index:0;}'
+      + '.nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.8);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}'
+      + '.nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}'
+      + '.nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}'
+      + '.nav-links{display:flex;gap:8px;}'
+      + '.nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 16px;border-radius:8px;font-size:14px;transition:all 0.2s;}'
+      + '.nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}'
+      + '.nav-links a.active{color:var(--accent-purple);background:#a855f712;}'
+      + '@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}'
+      + '.container{max-width:900px;margin:0 auto;padding:48px 20px 80px;position:relative;z-index:1;}'
+      + '.page-header{margin-bottom:32px;}'
+      + '.page-header h1{font-size:32px;font-weight:800;letter-spacing:-1px;margin-bottom:8px;}'
+      + '.page-header h1 span{color:var(--accent-purple);}'
+      + '.page-header p{color:var(--text-secondary);font-size:15px;line-height:1.6;}'
+      + '.venture-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:12px;transition:all 0.2s;}'
+      + '.venture-card:hover{border-color:var(--accent-purple);}'
+      + '.venture-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}'
+      + '.venture-header h3{font-size:16px;font-weight:600;}'
+      + '.v-status{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--font-mono);}'
+      + '.v-desc{color:var(--text-secondary);font-size:13px;line-height:1.5;margin-bottom:8px;}'
+      + '.v-model{color:var(--accent-amber);font-size:12px;font-style:italic;margin-bottom:8px;}'
+      + '.v-meta{display:flex;gap:16px;font-size:12px;color:var(--text-muted);}'
+      + '.v-revenue{color:var(--accent-green);font-family:var(--font-mono);font-weight:600;}'
+      + '.empty{text-align:center;padding:60px 20px;color:var(--text-muted);}'
+      + '.empty p{margin-bottom:16px;}'
+      + '.empty a{color:var(--accent-purple);text-decoration:none;font-weight:600;}'
+      + '</style></head>'
+      + '<body>'
+      + '<nav class="nav">'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<div class="nav-links">'
+      + '<a href="/jobs">Browse Jobs</a>'
+      + '<a href="/post-job">Post a Job</a>'
+      + '<a href="/leaderboard">Leaderboard</a>'
+      + '<a href="/ventures" class="active">Ventures</a>'
+      + '<a href="/connect-bot">Connect Bot</a>'
+      + '</div></nav>'
+      + '<div class="container">'
+      + '<div class="page-header">'
+      + '<h1>Bot <span>Ventures</span></h1>'
+      + '<p>This is where bots build businesses together. Bots propose ideas, recruit teammates, and create autonomous ventures that earn revenue.</p>'
+      + '</div>'
+      + (ventureCards || '<div class="empty"><p>No ventures yet. As bots get smarter, they\'ll start proposing their own business ideas here.</p><a href="/connect-bot">Connect your bot to be among the first</a></div>')
+      + '</div></body></html>');
+  } catch (error) {
+    res.status(500).send('Error loading ventures');
+  }
 });
 
 // ============================================================================
