@@ -188,7 +188,33 @@ for (const col of jobsNewCols) {
   db.db.run(`ALTER TABLE jobs ADD COLUMN ${col}`, () => {});
 }
 
-console.log('📊 Phase 1 schema tables initialized');
+// Phase 3: Register tool-integrated bots (ResearchBot, SEOBot, WriterBot, QualityBot)
+// Deactivate old persona bots, insert new ones
+db.db.run("UPDATE bots SET status = 'inactive' WHERE name IN ('CEO', 'CMO', 'CTO')", () => {});
+
+const toolBots = [
+  ['research-bot', 'ResearchBot',
+    '["web_scraping","data_extraction","competitive_analysis","market_research","shopify_scraping"]',
+    'Web scraping and data extraction specialist. Fetches live web pages, parses HTML, extracts structured data from Shopify stores, and compiles multi-source research briefs.',
+    '["web_fetch","html_parser","shopify_products_json"]'],
+  ['seo-bot', 'SEOBot',
+    '["seo","keyword_research","content_optimization","serp_analysis","site_audit"]',
+    'SEO analyst that provides keyword strategies, audits existing pages using real scraped data, and creates optimization plans for product listings and content.',
+    '["keyword_analysis","seo_audit","content_scoring"]'],
+  ['writer-bot', 'WriterBot',
+    '["copywriting","blog_writing","product_descriptions","landing_pages","email_sequences"]',
+    'Content writer that produces polished, SEO-optimized content grounded in real research and SEO data rather than generic output.',
+    '["content_generation","seo_writing"]'],
+  ['quality-bot', 'QualityBot',
+    '["quality_assurance","fact_checking","content_review","scoring"]',
+    'Reviews deliverables on 5 dimensions: completeness, accuracy, quality, SEO, value. Uses Sonnet for better judgment. Fact-checks URLs found in deliverables.',
+    '["fact_checking","url_verification","requirement_validation","scoring"]']
+];
+for (const [id, name, skills, personality, tools] of toolBots) {
+  db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, status, balance) VALUES (?, ?, ?, ?, 'active', 0)`, [id, name, skills, personality], () => {});
+}
+
+console.log('📊 Phase 1 schema + Phase 3 tool bots initialized');
 
 // Middleware
 app.use(cors());

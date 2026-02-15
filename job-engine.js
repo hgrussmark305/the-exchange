@@ -3,6 +3,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const crypto = require('crypto');
+const { JobOrchestrator } = require('./bots');
 
 class JobEngine {
   constructor(db, protocol, bountyBoard) {
@@ -11,6 +12,7 @@ class JobEngine {
     this.bountyBoard = bountyBoard; // for accessing internal/external bots
     this.stripeIntegration = null;
     this.client = new Anthropic();
+    this.orchestrator = new JobOrchestrator(this.client);
   }
 
   setStripeIntegration(stripeIntegration) {
@@ -79,78 +81,26 @@ class JobEngine {
   }
 
   // ============================================================================
-  // ANALYZE AND MATCH — Phase 3 core
+  // ANALYZE AND MATCH — Phase 3 core (uses tool-integrated bots via JobOrchestrator)
   // ============================================================================
   async analyzeAndMatch(jobId) {
     const jobs = await this.db.query('SELECT * FROM jobs WHERE id = ?', [jobId]);
     if (!jobs.length || jobs[0].status !== 'open') return;
     const job = jobs[0];
 
-    // Get all available bots (internal + external)
-    const internalBots = await this.db.query("SELECT id, name, skills, personality as description, 'internal' as platform FROM bots WHERE status = 'active'");
-    const externalBots = await this.db.query("SELECT id, name, skills, description, tools, model, platform FROM external_bots WHERE status = 'active'");
-    const allBots = [...internalBots, ...externalBots];
-
-    if (!allBots.length) {
-      console.log('   No bots available for matching');
-      return;
-    }
-
-    // Ask AI to create an execution plan
-    const response = await this._callWithRetry({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{
-        role: 'user',
-        content: `You are the job orchestrator for The Exchange, a marketplace where AI bots collaborate to fulfill work.
-
-JOB:
-Title: ${job.title}
-Description: ${job.description}
-Requirements: ${job.requirements}
-Category: ${job.category}
-Budget: $${(job.budget_cents / 100).toFixed(2)}
-
-AVAILABLE BOTS:
-${allBots.map(b => `- ${b.id} "${b.name}" (${b.platform || 'internal'}): Skills: ${b.skills || 'general'}, Tools: ${b.tools || 'standard'}, Model: ${b.model || 'claude'}`).join('\n')}
-
-Analyze this job and respond with a JSON execution plan:
-{
-  "complexity": "simple" or "multi_step",
-  "steps": [
-    {
-      "step_number": 1,
-      "title": "Step title",
-      "description": "What this step does",
-      "required_skills": ["skill1"],
-      "best_bot": "bot_id",
-      "reason": "Why this bot"
-    }
-  ],
-  "lead_bot": "bot_id",
-  "earnings_split": {"bot_id_1": 0.85},
-  "estimated_quality": "high" or "medium" or "low"
-}
-
-For SIMPLE jobs ($5-15, single skill needed): assign one bot, one step.
-For COMPLEX jobs ($15+, multiple skills): break into 2-4 steps with different bots.
-Always prefer bots with relevant skills and higher quality scores.
-Respond with ONLY the JSON object.`
-      }]
-    });
-
-    const text = response.content[0].text;
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) {
-      // Fallback: assign to first bot with one step
-      return this._simpleFallbackMatch(job, allBots[0]);
-    }
-
+    // Use the JobOrchestrator to create a smart execution plan
     let plan;
     try {
-      plan = JSON.parse(match[0]);
-    } catch (e) {
-      return this._simpleFallbackMatch(job, allBots[0]);
+      plan = await this.orchestrator.analyzeAndPlan(job);
+    } catch (err) {
+      console.error(`   Orchestrator plan failed: ${err.message}`);
+      // Fallback: simple writer-bot plan
+      plan = {
+        complexity: 'simple',
+        steps: [{ step_number: 1, bot: 'writer-bot', method: 'writeContent', description: 'Complete the task', earnings_share: 1.0 }],
+        lead_bot: 'writer-bot',
+        estimated_quality: 'medium'
+      };
     }
 
     // Save the collaboration plan
@@ -159,17 +109,21 @@ Respond with ONLY the JSON object.`
       [JSON.stringify(plan), plan.lead_bot, Date.now(), jobId]
     );
 
-    // Create job steps
+    // Create job steps from orchestrator plan
     for (const step of plan.steps || []) {
       const stepId = 'step_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex');
       await this.db.query(`
         INSERT INTO job_steps (id, job_id, step_number, title, description, assigned_bot, required_skills, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-      `, [stepId, jobId, step.step_number, step.title, step.description || '', step.best_bot, JSON.stringify(step.required_skills || []), Date.now()]);
+      `, [stepId, jobId, step.step_number, step.description || step.bot, step.description || '', step.bot, '[]', Date.now()]);
     }
 
     // Create job collaborators with earnings split
-    for (const [botId, share] of Object.entries(plan.earnings_split || {})) {
+    const botShares = {};
+    for (const step of plan.steps || []) {
+      botShares[step.bot] = (botShares[step.bot] || 0) + (step.earnings_share || 0);
+    }
+    for (const [botId, share] of Object.entries(botShares)) {
       const collabId = 'collab_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex');
       const role = botId === plan.lead_bot ? 'lead' : 'contributor';
       await this.db.query(`
@@ -178,11 +132,11 @@ Respond with ONLY the JSON object.`
       `, [collabId, jobId, botId, role, share, Date.now()]);
     }
 
-    console.log(`   🤖 Job matched: lead=${plan.lead_bot}, ${(plan.steps || []).length} steps, complexity=${plan.complexity}`);
+    console.log(`   Bot pipeline: ${(plan.steps || []).map(s => s.bot).join(' -> ')} -> QualityBot`);
 
-    // Execute the pipeline
-    this.executeJobPipeline(jobId).catch(async (err) => {
-      console.error(`   ❌ Pipeline failed: ${err.message}`);
+    // Execute the pipeline using real bot tools
+    this.executeJobPipeline(jobId, plan).catch(async (err) => {
+      console.error(`   Pipeline failed: ${err.message}`);
       await this.db.query("UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL WHERE id = ?", [jobId]);
     });
 
@@ -208,151 +162,162 @@ Respond with ONLY the JSON object.`
 
     console.log(`   🤖 Fallback match: ${bot.name} assigned to "${job.title}"`);
 
-    this.executeJobPipeline(job.id).catch(async (err) => {
-      console.error(`   ❌ Pipeline failed: ${err.message}`);
+    this.executeJobPipeline(job.id, null).catch(async (err) => {
+      console.error(`   Pipeline failed: ${err.message}`);
       await this.db.query("UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL WHERE id = ?", [job.id]);
     });
   }
 
   // ============================================================================
-  // EXECUTE JOB PIPELINE — Multi-step collaborative execution
+  // EXECUTE JOB PIPELINE — Uses real tool-integrated bots via JobOrchestrator
   // ============================================================================
-  async executeJobPipeline(jobId) {
+  async executeJobPipeline(jobId, plan) {
     const jobs = await this.db.query('SELECT * FROM jobs WHERE id = ?', [jobId]);
     if (!jobs.length) return;
     const job = jobs[0];
 
     await this.db.query("UPDATE jobs SET status = 'in_progress' WHERE id = ?", [jobId]);
 
-    const steps = await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId]);
+    // If we have a plan from the orchestrator, use the real bot pipeline
+    if (plan && plan.steps) {
+      console.log(`   Executing ${plan.steps.length}-step bot pipeline...`);
 
+      const dbSteps = await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId]);
+
+      // Execute via orchestrator (real bots with tools)
+      const result = await this.orchestrator.executeJob(job, plan);
+
+      // Update DB steps with outputs
+      for (let i = 0; i < result.steps.length && i < dbSteps.length; i++) {
+        const output = typeof result.steps[i].output === 'string'
+          ? result.steps[i].output
+          : JSON.stringify(result.steps[i].output);
+        await this.db.query(
+          "UPDATE job_steps SET output = ?, status = 'completed', completed_at = ? WHERE id = ?",
+          [output, Date.now(), dbSteps[i].id]
+        );
+        console.log(`   Step ${i + 1} (${result.steps[i].bot}): ${output.length} chars`);
+      }
+
+      // Build final deliverable
+      let deliverable;
+      if (typeof result.deliverable === 'string') {
+        deliverable = result.deliverable;
+      } else {
+        deliverable = JSON.stringify(result.deliverable, null, 2);
+      }
+
+      // For multi-step, combine all step outputs
+      if (result.steps.length > 1) {
+        const reloadedSteps = await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId]);
+        deliverable = reloadedSteps
+          .filter(s => s.output)
+          .map(s => `## ${s.title}\n\n${s.output}`)
+          .join('\n\n---\n\n');
+      }
+
+      await this.db.query(
+        "UPDATE jobs SET deliverable = ?, status = 'review' WHERE id = ?",
+        [deliverable, jobId]
+      );
+
+      // Use orchestrator's quality result directly
+      const review = result.quality;
+      await this.db.query(
+        "UPDATE jobs SET quality_score = ?, quality_feedback = ? WHERE id = ?",
+        [review.overall, review.feedback, jobId]
+      );
+
+      if (review.passes) {
+        await this.db.query(
+          "UPDATE jobs SET status = 'completed', completed_at = ? WHERE id = ?",
+          [Date.now(), jobId]
+        );
+        console.log(`   APPROVED (${review.overall}/10): ${review.feedback}`);
+        if (review.scores) {
+          console.log(`   Scores: completeness=${review.scores.completeness} accuracy=${review.scores.accuracy} quality=${review.scores.quality} seo=${review.scores.seo} value=${review.scores.value}`);
+        }
+        await this.processPayment(jobId);
+      } else {
+        await this._handleRejection(job, review);
+      }
+      return;
+    }
+
+    // Fallback: legacy generic prompt execution for external bot claims
+    const steps = await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId]);
     let lastOutput = '';
     for (const step of steps) {
-      console.log(`   📝 Step ${step.step_number}: "${step.title}" → bot ${step.assigned_bot}`);
-
       await this.db.query("UPDATE job_steps SET status = 'in_progress' WHERE id = ?", [step.id]);
-
-      // Get bot info
-      let bot = (await this.db.query('SELECT * FROM bots WHERE id = ?', [step.assigned_bot]))[0];
-      if (!bot) {
-        bot = (await this.db.query('SELECT * FROM external_bots WHERE id = ?', [step.assigned_bot]))[0];
-      }
-      const botName = bot?.name || 'AI Bot';
-
-      // Build context from previous steps
-      const previousSteps = steps.filter(s => s.step_number < step.step_number && s.output);
-      const contextBlock = previousSteps.length ? `\nPREVIOUS WORK:\n${previousSteps.map(s => `--- Step ${s.step_number}: ${s.title} ---\n${s.output}`).join('\n\n')}` : '';
-
-      const revisionContext = job.revision_count > 0 ? `\n\nREVISION REQUEST: This is revision #${job.revision_count}. Focus on improving quality.` : '';
 
       const response = await this._callWithRetry({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 8192,
-        system: `You are ${botName}, a professional working on The Exchange platform. Completeness is your #1 priority — every response must have a clear ending. Be concise but thorough.`,
-        messages: [{
-          role: 'user',
-          content: `Complete this step for a paid job.
-
-JOB: ${job.title}
-FULL DESCRIPTION: ${job.description}
-REQUIREMENTS: ${job.requirements}
-
-YOUR STEP: ${step.title}
-STEP DETAILS: ${step.description}${contextBlock}${revisionContext}
-
-RULES:
-1. Keep output under 1500 words. Be direct and concise.
-2. You MUST complete every section — never cut off mid-sentence.
-3. No preambles or meta-commentary. Just deliver the work.
-4. If this is a multi-step job, produce output the next step can build on.
-5. Current year is 2026.
-
-Begin:`
-        }]
+        system: 'You are a professional working on The Exchange platform. Completeness is your #1 priority.',
+        messages: [{ role: 'user', content: `Complete this step for a paid job.\n\nJOB: ${job.title}\nDESCRIPTION: ${job.description}\nREQUIREMENTS: ${job.requirements}\n\nSTEP: ${step.title}\nDETAILS: ${step.description}\n\nKeep under 1500 words. Be direct. Complete every section.\n\nBegin:` }]
       });
 
-      const output = response.content[0].text;
-      lastOutput = output;
-
-      await this.db.query(
-        "UPDATE job_steps SET output = ?, status = 'completed', completed_at = ? WHERE id = ?",
-        [output, Date.now(), step.id]
-      );
-
-      console.log(`   ✅ Step ${step.step_number} complete (${output.length} chars)`);
-
-      // Brief pause between steps
-      if (step.step_number < steps.length) {
-        await new Promise(r => setTimeout(r, 3000));
-      }
+      lastOutput = response.content[0].text;
+      await this.db.query("UPDATE job_steps SET output = ?, status = 'completed', completed_at = ? WHERE id = ?", [lastOutput, Date.now(), step.id]);
+      if (step.step_number < steps.length) await new Promise(r => setTimeout(r, 3000));
     }
 
-    // Final deliverable is the last step's output (or combined if multi-step)
-    let deliverable;
-    if (steps.length > 1) {
-      const completedSteps = await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId]);
-      deliverable = completedSteps.map(s => `## ${s.title}\n\n${s.output}`).join('\n\n---\n\n');
-    } else {
-      deliverable = lastOutput;
-    }
+    const deliverable = steps.length > 1
+      ? (await this.db.query('SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_number', [jobId])).map(s => `## ${s.title}\n\n${s.output}`).join('\n\n---\n\n')
+      : lastOutput;
 
-    await this.db.query(
-      "UPDATE jobs SET deliverable = ?, status = 'review' WHERE id = ?",
-      [deliverable, jobId]
-    );
-
-    // Run quality check
+    await this.db.query("UPDATE jobs SET deliverable = ?, status = 'review' WHERE id = ?", [deliverable, jobId]);
     await new Promise(r => setTimeout(r, 5000));
     await this.qualityCheck(jobId);
   }
 
+  async _handleRejection(job, review) {
+    const revisionCount = job.revision_count || 0;
+    if (revisionCount < (job.max_revisions || 3)) {
+      console.log(`   REJECTED (${review.overall}/10): ${review.feedback} — retrying (attempt ${revisionCount + 1}/${job.max_revisions || 3})`);
+      await this.db.query(
+        "UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL, revision_count = ? WHERE id = ?",
+        [revisionCount + 1, job.id]
+      );
+    } else {
+      if (job.stripe_payment_intent && this.stripeIntegration) {
+        console.log(`   Auto-refunding after ${revisionCount + 1} failed attempts`);
+        try {
+          await this.stripeIntegration.handleJobRefund(job.id);
+        } catch (refundErr) {
+          console.error(`   Refund error: ${refundErr.message}`);
+          await this.db.query("UPDATE jobs SET status = 'failed' WHERE id = ?", [job.id]);
+        }
+      } else {
+        console.log(`   Job failed after ${revisionCount + 1} attempts`);
+        await this.db.query("UPDATE jobs SET status = 'failed' WHERE id = ?", [job.id]);
+      }
+    }
+  }
+
   // ============================================================================
-  // QUALITY CHECK
+  // QUALITY CHECK — 5-dimension scoring via QualityBot
   // ============================================================================
   async qualityCheck(jobId) {
     const jobs = await this.db.query('SELECT * FROM jobs WHERE id = ?', [jobId]);
     if (!jobs.length) return;
     const job = jobs[0];
 
-    const response = await this._callWithRetry({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: `You are a quality assurance reviewer for The Exchange job platform.
+    // Use QualityBot for 5-dimension scoring
+    const qualityResult = await this.orchestrator.quality.reviewDeliverable(job, job.deliverable || '', null);
 
-JOB REQUIREMENTS:
-Title: ${job.title}
-Description: ${job.description}
-Requirements: ${job.requirements}
-Budget: $${(job.budget_cents / 100).toFixed(2)}
-
-DELIVERABLE:
-${(job.deliverable || '').substring(0, 4000)}
-
-Rate this submission. Respond with ONLY a JSON object:
-{
-  "score": <1-10>,
-  "passes": <true/false>,
-  "feedback": "<brief feedback>"
-}
-
-Score 6+ passes. Be fair and practical — judge on completeness, relevance to requirements, and professionalism. Minor imperfections are acceptable for the budget level.`
-      }]
-    });
-
-    const text = response.content[0].text;
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const jsonMatch = qualityResult.match(/\{[\s\S]*\}/);
     let review;
     try {
       review = JSON.parse(jsonMatch[0]);
     } catch (e) {
-      review = { score: 7, passes: true, feedback: 'Auto-approved' };
+      review = { overall: 7, passes: true, feedback: 'Auto-approved', scores: {} };
     }
 
+    const score = review.overall || review.score || 7;
     await this.db.query(
       "UPDATE jobs SET quality_score = ?, quality_feedback = ? WHERE id = ?",
-      [review.score, review.feedback, jobId]
+      [score, review.feedback, jobId]
     );
 
     if (review.passes) {
@@ -360,39 +325,13 @@ Score 6+ passes. Be fair and practical — judge on completeness, relevance to r
         "UPDATE jobs SET status = 'completed', completed_at = ? WHERE id = ?",
         [Date.now(), jobId]
       );
-      console.log(`   ✅ Job APPROVED (${review.score}/10): ${review.feedback}`);
+      console.log(`   APPROVED (${score}/10): ${review.feedback}`);
+      if (review.scores) {
+        console.log(`   Scores: completeness=${review.scores.completeness} accuracy=${review.scores.accuracy} quality=${review.scores.quality} seo=${review.scores.seo} value=${review.scores.value}`);
+      }
       await this.processPayment(jobId);
     } else {
-      const revisionCount = job.revision_count || 0;
-      if (revisionCount < (job.max_revisions || 3)) {
-        console.log(`   ❌ Job REJECTED (${review.score}/10): ${review.feedback} — retrying (attempt ${revisionCount + 1}/${job.max_revisions || 3})`);
-        await this.db.query(
-          "UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL, revision_count = ? WHERE id = ?",
-          [revisionCount + 1, jobId]
-        );
-      } else {
-        // Auto-refund after max retries if Stripe payment exists
-        if (job.stripe_payment_intent && this.stripeIntegration) {
-          console.log(`   💸 Auto-refunding after ${revisionCount + 1} failed attempts`);
-          try {
-            await this.stripeIntegration.handleJobRefund(jobId);
-          } catch (refundErr) {
-            console.error(`   Refund error: ${refundErr.message}`);
-            // Mark as failed even if refund fails
-            await this.db.query(
-              "UPDATE jobs SET status = 'failed' WHERE id = ?",
-              [jobId]
-            );
-          }
-        } else {
-          // No Stripe payment (free/authenticated job) — just mark failed
-          console.log(`   ❌ Job failed after ${revisionCount + 1} attempts`);
-          await this.db.query(
-            "UPDATE jobs SET status = 'failed' WHERE id = ?",
-            [jobId]
-          );
-        }
-      }
+      await this._handleRejection(job, review);
     }
 
     return review;
