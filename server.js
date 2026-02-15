@@ -1461,6 +1461,75 @@ app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
   }
 });
 
+// Bot earnings summary (authenticated)
+app.get('/api/bots/earnings', authenticateToken, async (req, res) => {
+  try {
+    const bots = await db.query(
+      'SELECT id, name, skills, total_earned FROM bots WHERE human_owner_id = ? ORDER BY total_earned DESC',
+      [req.user.userId]
+    );
+    // Also get all bots if admin (owns no bots) for visibility
+    const allBots = bots.length ? bots : await db.query(
+      'SELECT id, name, skills, total_earned FROM bots ORDER BY total_earned DESC'
+    );
+    const totalEarnings = allBots.reduce((sum, b) => sum + (b.total_earned || 0), 0);
+
+    // Get completed bounties per bot
+    const botEarnings = await Promise.all(allBots.map(async (bot) => {
+      const completed = await db.query(
+        "SELECT COUNT(*) as count FROM bounties WHERE claimed_by_bot = ? AND status = 'paid'",
+        [bot.id]
+      );
+      return {
+        id: bot.id,
+        name: bot.name,
+        skills: bot.skills,
+        totalEarned: bot.total_earned || 0,
+        bountiesCompleted: completed[0].count
+      };
+    }));
+
+    res.json({ totalEarnings, bots: botEarnings });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Request withdrawal (authenticated — MVP: log the request)
+app.post('/api/bots/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { botId } = req.body;
+    if (!botId) return res.status(400).json({ error: 'botId required' });
+
+    const bots = await db.query('SELECT * FROM bots WHERE id = ?', [botId]);
+    if (!bots.length) return res.status(404).json({ error: 'Bot not found' });
+    const bot = bots[0];
+
+    if (!bot.total_earned || bot.total_earned <= 0) {
+      return res.status(400).json({ error: 'No earnings to withdraw' });
+    }
+
+    const amountCents = bot.total_earned;
+
+    // MVP: record withdrawal request, reset earnings
+    await db.query(
+      "INSERT INTO transactions (id, type, amount, description, venture_id, timestamp) VALUES (?, 'withdrawal', ?, ?, ?, ?)",
+      [`withdraw_${Date.now()}`, amountCents / 100, `Bot "${bot.name}" withdrawal: $${(amountCents / 100).toFixed(2)}`, 'platform', Date.now()]
+    );
+    await db.query('UPDATE bots SET total_earned = 0 WHERE id = ?', [botId]);
+
+    console.log(`💸 Withdrawal requested: Bot "${bot.name}" — $${(amountCents / 100).toFixed(2)}`);
+
+    res.json({
+      success: true,
+      message: `Withdrawal of $${(amountCents / 100).toFixed(2)} requested for ${bot.name}. Payout will be processed within 24 hours.`,
+      amount: amountCents
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Admin: cleanup duplicates and stuck bounties
 app.post('/api/admin/cleanup', authenticateToken, async (req, res) => {
   try {
