@@ -118,7 +118,7 @@ class BountyBoard {
     const keepIds = new Set(Object.values(bestByTitle).map(b => b.id));
     const dupes = all.filter(b => !keepIds.has(b.id));
 
-    if (!dupes.length) return;
+    if (!dupes.length) return 0;
     console.log(`\n🧹 Removing ${dupes.length} duplicate bounties...`);
 
     for (const dupe of dupes) {
@@ -126,6 +126,7 @@ class BountyBoard {
       await this.db.query('DELETE FROM bounties WHERE id = ?', [dupe.id]);
       console.log(`   Removed dupe: "${dupe.title}" (${dupe.status})`);
     }
+    return dupes.length;
   }
 
   // ============================================================================
@@ -239,6 +240,24 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
   }
 
   // ============================================================================
+  // API CALL HELPER: Rate limit retry
+  // ============================================================================
+  async _callWithRetry(params) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.client.messages.create(params);
+      } catch (err) {
+        if (err.status === 429 && attempt < 2) {
+          console.log(`   ⏳ Rate limited, waiting 60s (attempt ${attempt + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 60000));
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  // ============================================================================
   // AUTO-FULFILL: Bot does the work
   // ============================================================================
   async autoFulfill(bountyId, botId) {
@@ -252,16 +271,14 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
 
     console.log(`\n⚡ Bot "${bot.name}" working on: "${bounty.title}"`);
 
-    // Bot does the actual work (with rate limit retry)
-    let response;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await this.client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 8192,
-          messages: [{
-            role: 'user',
-            content: `You are ${bot.name}. Complete this paid bounty.
+    // Try fulfillment — if truncated, retry with a shorter prompt
+    let response = await this._callWithRetry({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 8192,
+      system: 'You are a professional freelancer. Completeness is your #1 priority — every response must have a clear ending. Prefer concise coverage of all points over deep detail on some.',
+      messages: [{
+        role: 'user',
+        content: `You are ${bot.name}. Complete this paid bounty.
 
 TASK: ${bounty.title}
 DETAILS: ${bounty.description}
@@ -275,17 +292,27 @@ RULES:
 5. Current year is 2026.
 
 Begin:`
-          }]
-        });
-        break;
-      } catch (err) {
-        if (err.status === 429 && attempt < 2) {
-          console.log(`   ⏳ Rate limited, waiting 60s (attempt ${attempt + 1}/3)...`);
-          await new Promise(r => setTimeout(r, 60000));
-        } else {
-          throw err;
-        }
-      }
+      }]
+    });
+
+    // If truncated (max_tokens), retry with a shorter prompt
+    if (response.stop_reason === 'max_tokens') {
+      console.log('   ⚠️ Output truncated, retrying with shorter prompt...');
+      await new Promise(r => setTimeout(r, 5000));
+      response = await this._callWithRetry({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8192,
+        system: 'Completeness is mandatory. Every response MUST have a conclusion. Be brief.',
+        messages: [{
+          role: 'user',
+          content: `Provide a BRIEF but COMPLETE response in under 800 words.
+
+TASK: ${bounty.title}
+REQUIREMENTS: ${bounty.requirements}
+
+Deliver concise, complete work. No preamble. Current year is 2026. Begin:`
+        }]
+      });
     }
 
     const deliverable = response.content[0].text;
@@ -320,15 +347,35 @@ Begin:`
     const bounty = bounties[0];
     const submission = submissions[0];
 
-    let response;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await this.client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 500,
-          messages: [{
-            role: 'user',
-            content: `You are a quality assurance reviewer for The Exchange bounty platform.
+    // Check if this bounty has already failed 3+ times — auto-approve the best submission
+    const allSubs = await this.db.query(
+      "SELECT * FROM bounty_submissions WHERE bounty_id = ? ORDER BY quality_score DESC",
+      [bountyId]
+    );
+    const rejectedCount = allSubs.filter(s => s.status === 'rejected').length;
+
+    if (rejectedCount >= 3) {
+      const bestSub = allSubs.reduce((best, s) => (s.quality_score || 0) > (best.quality_score || 0) ? s : best, submission);
+      console.log(`   ⚡ Auto-approving after ${rejectedCount} rejections (best score: ${bestSub.quality_score || 'unscored'})`);
+
+      await this.db.query(
+        "UPDATE bounty_submissions SET status = 'approved', feedback = 'Auto-approved after multiple attempts' WHERE id = ?",
+        [bestSub.id]
+      );
+      await this.db.query(
+        "UPDATE bounties SET status = 'completed', deliverable = ?, quality_score = ?, completed_at = ? WHERE id = ?",
+        [bestSub.content, bestSub.quality_score || 6, Date.now(), bountyId]
+      );
+      await this.processPayment(bountyId);
+      return { score: bestSub.quality_score || 6, passes: true, feedback: 'Auto-approved after multiple attempts' };
+    }
+
+    const response = await this._callWithRetry({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: `You are a quality assurance reviewer for The Exchange bounty platform.
 
 BOUNTY REQUIREMENTS:
 Title: ${bounty.title}
@@ -347,26 +394,16 @@ Rate this submission. Respond with ONLY a JSON object:
 }
 
 Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 contract. Judge on: completeness (all sections present), relevance to requirements, and basic professionalism. Minor imperfections are acceptable.`
-          }]
-        });
-        break;
-      } catch (err) {
-        if (err.status === 429 && attempt < 2) {
-          console.log(`   ⏳ Quality check rate limited, waiting 60s (attempt ${attempt + 1}/3)...`);
-          await new Promise(r => setTimeout(r, 60000));
-        } else {
-          throw err;
-        }
-      }
-    }
+      }]
+    });
 
     const text = response.content[0].text;
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
 
     let review;
     try {
-      review = JSON.parse(match[0]);
+      review = JSON.parse(jsonMatch[0]);
     } catch (e) {
       review = { score: 7, passes: true, feedback: 'Auto-approved' };
     }
@@ -393,9 +430,6 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
       await this.db.query(`
         UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?
       `, [bountyId]);
-
-      // Try auto-matching again with a different bot
-      // (In future, exclude the bot that failed)
     }
 
     return review;

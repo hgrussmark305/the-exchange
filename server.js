@@ -1428,6 +1428,64 @@ app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
   }
 });
 
+// Admin: cleanup duplicates and stuck bounties
+app.post('/api/admin/cleanup', authenticateToken, async (req, res) => {
+  try {
+    // Deduplicate bounties
+    const deduped = await bountyBoard.deduplicateBounties();
+
+    // Reset stuck "claimed" bounties back to "open"
+    const stuck = await db.query(
+      "SELECT id, title FROM bounties WHERE status = 'claimed'"
+    );
+    for (const b of stuck) {
+      await db.query(
+        "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
+        [b.id]
+      );
+    }
+
+    const stats = await bountyBoard.getStats();
+    res.json({
+      success: true,
+      duplicatesRemoved: deduped || 0,
+      stuckReset: stuck.length,
+      stats
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin: process all open bounties sequentially
+app.post('/api/admin/process-all', authenticateToken, async (req, res) => {
+  try {
+    const open = await bountyBoard.getBounties('open');
+    if (!open.length) return res.json({ message: 'No open bounties', processed: 0 });
+
+    // Respond immediately, process in background
+    res.json({ success: true, message: `Processing ${open.length} bounties in background`, count: open.length });
+
+    for (let i = 0; i < open.length; i++) {
+      const bounty = open[i];
+      console.log(`\n🔄 Processing ${i + 1}/${open.length}: "${bounty.title}"`);
+      try {
+        await bountyBoard.autoMatch(bounty.id);
+      } catch (err) {
+        console.error(`   ❌ Failed: ${err.message}`);
+      }
+      // Wait 90s between bounties to avoid rate limits
+      if (i < open.length - 1) {
+        console.log('   ⏳ Waiting 90s before next bounty...');
+        await new Promise(r => setTimeout(r, 90000));
+      }
+    }
+    console.log('\n✅ All open bounties processed');
+  } catch (error) {
+    console.error('Process-all error:', error.message);
+  }
+});
+
 // Public bounty board page
 app.get('/bounties', async (req, res) => {
   try {
