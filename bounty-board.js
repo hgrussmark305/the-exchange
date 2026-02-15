@@ -324,11 +324,24 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
       ? `\n\nIMPORTANT — REVISION REQUEST:\nThe client was not satisfied with the previous submission. Their feedback:\n"${bounty.revision_reason}"\nAddress this feedback directly in your revised work.\n`
       : '';
 
-    // Try fulfillment — if truncated, retry with a shorter prompt
+    // Flex word limit based on category/complexity
+    const category = (bounty.category || '').toLowerCase();
+    const complexCategories = ['research', 'analysis', 'technical', 'architecture', 'strategy', 'report'];
+    const simpleCategories = ['social', 'email', 'copy', 'tagline', 'tweet'];
+    let wordLimit;
+    if (simpleCategories.some(c => category.includes(c))) {
+      wordLimit = 800;
+    } else if (complexCategories.some(c => category.includes(c))) {
+      wordLimit = 3000;
+    } else {
+      wordLimit = 2000;
+    }
+
+    // Try fulfillment — Sonnet produces higher-quality work that passes review
     let response = await this._callWithRetry({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
-      system: 'You are a professional freelancer. Completeness is your #1 priority — every response must have a clear ending. Prefer concise coverage of all points over deep detail on some.',
+      system: 'You are a professional freelancer. Completeness is your #1 priority — every response must have a clear ending and cover all requirements.',
       messages: [{
         role: 'user',
         content: `You are ${bot.name}. Complete this paid bounty.
@@ -338,9 +351,9 @@ DETAILS: ${bounty.description}
 REQUIREMENTS: ${bounty.requirements}${revisionContext}
 
 RULES:
-1. Keep output under 1500 words. Be direct and concise.
+1. Be as concise as possible while fully covering all requirements. Aim for under ${wordLimit} words.
 2. You MUST complete every section — never cut off mid-sentence.
-3. Cover ALL requirements mentioned above.
+3. Cover ALL requirements mentioned above with concrete, specific details.
 4. No preambles, no meta-commentary. Just deliver the work.
 5. Current year is 2026.
 
@@ -353,17 +366,17 @@ Begin:`
       console.log('   ⚠️ Output truncated, retrying with shorter prompt...');
       await new Promise(r => setTimeout(r, 5000));
       response = await this._callWithRetry({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
-        system: 'Completeness is mandatory. Every response MUST have a conclusion. Be brief.',
+        system: 'Completeness is mandatory. Every response MUST have a conclusion.',
         messages: [{
           role: 'user',
-          content: `Provide a BRIEF but COMPLETE response in under 800 words.
+          content: `Provide a COMPLETE response in under ${Math.round(wordLimit * 0.6)} words.
 
 TASK: ${bounty.title}
 REQUIREMENTS: ${bounty.requirements}
 
-Deliver concise, complete work. No preamble. Current year is 2026. Begin:`
+Cover all requirements with specific details. No preamble. Current year is 2026. Begin:`
         }]
       });
     }
@@ -425,28 +438,35 @@ Deliver concise, complete work. No preamble. Current year is 2026. Begin:`
 
     const response = await this._callWithRetry({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
+      max_tokens: 1000,
       messages: [{
         role: 'user',
-        content: `You are a quality assurance reviewer for The Exchange bounty platform.
+        content: `You are a quality reviewer for The Exchange bounty platform. Your job is to confirm work is GOOD ENOUGH to deliver, not to find flaws.
 
 BOUNTY REQUIREMENTS:
 Title: ${bounty.title}
 Description: ${bounty.description}
 Requirements: ${bounty.requirements}
+Category: ${bounty.category || 'general'}
 Budget: $${(bounty.budget_cents / 100).toFixed(2)}
 
 SUBMISSION:
-${submission.content.substring(0, 3000)}
+${submission.content}
 
-Rate this submission. Respond with ONLY a JSON object:
+Rate this submission on these dimensions (each 1-10):
+1. COMPLETENESS: Does it address the key requirements?
+2. SPECIFICITY: Does it give concrete, actionable details rather than vague platitudes?
+3. QUALITY: Is it well-structured, readable, and professional?
+${(bounty.category === 'marketing' || bounty.category === 'content' || bounty.category === 'seo') ? '4. SEO: Proper keywords, structure, meta descriptions?' : '(SEO dimension skipped — not relevant for this category)'}
+
+Respond with ONLY a JSON object:
 {
   "score": <1-10>,
   "passes": <true/false>,
   "feedback": "<brief feedback>"
 }
 
-Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 contract. Judge on: completeness (all sections present), relevance to requirements, and basic professionalism. Minor imperfections are acceptable.`
+Score 6+ passes. This is a $${(bounty.budget_cents / 100).toFixed(2)} bounty — judge accordingly. The question is: "Would a reasonable customer be satisfied with this for the price?" If the work covers the requirements and provides real value, it passes. Don't penalize for minor imperfections or stylistic preferences.`
       }]
     });
 

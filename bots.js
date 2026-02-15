@@ -290,7 +290,7 @@ class WriterBot {
 
   async writeProductDescriptions(products, seoData) {
     const response = await this.client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       messages: [{
         role: 'user',
@@ -323,10 +323,10 @@ Format as a clear deliverable the customer can copy and use immediately.`
   }
 
   async writeBlogPost(topic, researchData, seoData) {
-    const researchStr = typeof researchData === 'string' ? researchData.substring(0, 3000) : JSON.stringify(researchData).substring(0, 3000);
-    const seoStr = typeof seoData === 'string' ? seoData.substring(0, 1500) : JSON.stringify(seoData).substring(0, 1500);
+    const researchStr = typeof researchData === 'string' ? researchData : JSON.stringify(researchData);
+    const seoStr = typeof seoData === 'string' ? seoData : JSON.stringify(seoData);
     const response = await this.client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       messages: [{
         role: 'user',
@@ -340,7 +340,7 @@ ${researchStr}
 SEO KEYWORDS (from SEOBot):
 ${seoStr}
 
-Write a 1000-1200 word blog post that:
+Write a 1200-2000 word blog post that:
 1. Uses the researched facts — do NOT make up statistics
 2. Naturally incorporates target keywords
 3. Has a compelling title under 60 chars
@@ -349,19 +349,18 @@ Write a 1000-1200 word blog post that:
 6. Ends with a clear CTA
 7. Includes a meta description under 160 chars
 
-CRITICAL: Completeness over length. Finish every section. End with a proper conclusion. Never stop mid-sentence.`
+Completeness over length. Finish every section. End with a proper conclusion. Never stop mid-sentence.`
       }]
     });
 
-    // If truncated, retry with shorter prompt
     if (response.stop_reason === 'max_tokens') {
       console.log('   WriterBot output truncated — retrying with shorter target...');
       const retry = await this.client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
         messages: [{
           role: 'user',
-          content: `Write a COMPLETE 800-word SEO blog post on: ${topic}\n\nKey points from research: ${researchStr.substring(0, 1500)}\n\nBe concise. Cover ALL sections. End with a conclusion. NEVER stop mid-sentence.`
+          content: `Write a COMPLETE 1000-word SEO blog post on: ${topic}\n\nKey points from research: ${researchStr.substring(0, 3000)}\n\nCover ALL sections. End with a conclusion. NEVER stop mid-sentence.`
         }]
       });
       return retry.content[0].text;
@@ -371,7 +370,7 @@ CRITICAL: Completeness over length. Finish every section. End with a proper conc
 
   async writeLandingPage(topic, competitorAnalysis, seoData) {
     const response = await this.client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       messages: [{
         role: 'user',
@@ -401,9 +400,9 @@ Use insights from competitor analysis to differentiate. Target the SEO keywords 
   }
 
   async writeContent(brief) {
-    const briefStr = typeof brief === 'string' ? brief.substring(0, 5000) : JSON.stringify(brief).substring(0, 5000);
+    const briefStr = typeof brief === 'string' ? brief : JSON.stringify(brief);
     const response = await this.client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       messages: [{
         role: 'user',
@@ -412,25 +411,24 @@ Use insights from competitor analysis to differentiate. Target the SEO keywords 
 BRIEF:
 ${briefStr}
 
-CRITICAL RULES:
+RULES:
 1. COMPLETENESS IS #1 PRIORITY. Cover every section and requirement. Never cut off mid-sentence.
-2. Keep content under 1200 words. Be concise but thorough — brevity beats length.
-3. If the task covers multiple items (e.g. "10 companies"), cover ALL of them with shorter entries rather than going deep on a few.
-4. End with a proper conclusion. If running long, wrap up quickly rather than stopping mid-thought.
-5. Be professional, engaging, and specific. Use any research data or SEO guidelines provided.
-6. Do not hallucinate facts — if you don't have specific data, make reasonable general statements.`
+2. Be as concise as possible while covering all requirements thoroughly. Aim for under 2000 words.
+3. If the task covers multiple items (e.g. "10 companies"), cover ALL of them rather than going deep on a few.
+4. End with a proper conclusion.
+5. Be professional, engaging, and specific. Use concrete details, not vague generalities.
+6. Ground claims in the provided research data. If no data is available, make reasonable general statements rather than inventing statistics.`
       }]
     });
 
-    // If truncated, retry with condensed prompt
     if (response.stop_reason === 'max_tokens') {
       console.log('   WriterBot output truncated — retrying condensed...');
       const retry = await this.client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
         messages: [{
           role: 'user',
-          content: `Write a COMPLETE, CONCISE deliverable (under 800 words) for this task:\n\n${briefStr.substring(0, 3000)}\n\nCover ALL requirements briefly. End with a proper conclusion. NEVER stop mid-sentence.`
+          content: `Write a COMPLETE deliverable (under 1200 words) for this task:\n\n${briefStr.substring(0, 5000)}\n\nCover ALL requirements. End with a proper conclusion. NEVER stop mid-sentence.`
         }]
       });
       return retry.content[0].text;
@@ -456,7 +454,7 @@ class QualityBot {
       max_tokens: 2000,
       messages: [{
         role: 'user',
-        content: `You are QualityBot, the quality reviewer for The Exchange AI marketplace.
+        content: `You are QualityBot for The Exchange AI marketplace. Your role is to confirm deliverables are GOOD ENOUGH, not to nitpick. The question is: "Would a reasonable customer be satisfied with this for the price?"
 
 JOB REQUIREMENTS:
 Title: ${job.title}
@@ -466,26 +464,26 @@ Category: ${job.category || 'general'}
 Budget: $${(job.budget_cents / 100).toFixed(2)}
 
 DELIVERABLE TO REVIEW:
-${typeof deliverable === 'string' ? deliverable.substring(0, 5000) : JSON.stringify(deliverable).substring(0, 5000)}
+${typeof deliverable === 'string' ? deliverable : JSON.stringify(deliverable)}
 
 ${stepOutputs ? `PIPELINE DATA (what each bot produced):
 ${stepOutputs}` : 'Single-step job — no pipeline data.'}
 
-Score this deliverable on 5 dimensions (each 0-10):
+Score this deliverable on the relevant dimensions (each 1-10):
 
-1. COMPLETENESS: Does it cover ALL requirements in the job description?
-2. ACCURACY: Are facts/claims verifiable? Any obvious hallucinations or made-up data?
-3. QUALITY: Is the writing professional, well-structured, and polished?
-4. SEO (if applicable): Proper keywords, meta tags, heading structure? Score N/A as 7 if not relevant.
-5. VALUE: Would the customer be satisfied at this price point? Is it worth $${(job.budget_cents / 100).toFixed(2)}?
+1. COMPLETENESS: Does it address the key requirements? (Not every minor detail — the important ones.)
+2. SPECIFICITY: Does it provide concrete, actionable details? Or is it full of vague generalities and filler?
+3. QUALITY: Is it well-structured, readable, and professional?
+${['marketing', 'content', 'seo', 'copywriting'].includes((job.category || '').toLowerCase()) ? '4. SEO: Proper keywords, heading structure, meta descriptions?' : '(SEO dimension not scored — not relevant for this job category.)'}
+4. VALUE: Is this worth $${(job.budget_cents / 100).toFixed(2)} to the customer?
 
 Respond ONLY with valid JSON:
 {
   "scores": {
     "completeness": 0,
-    "accuracy": 0,
+    "specificity": 0,
     "quality": 0,
-    "seo": 0,
+${['marketing', 'content', 'seo', 'copywriting'].includes((job.category || '').toLowerCase()) ? '    "seo": 0,' : ''}
     "value": 0
   },
   "overall": 0,
@@ -495,7 +493,7 @@ Respond ONLY with valid JSON:
   "strengths": ["specific strength 1", "specific strength 2"]
 }
 
-Overall score = average of 5 dimensions. Score 6+ passes. Be FAIR — judge relative to budget. A $10 job has different standards than a $100 job.`
+Overall score = average of scored dimensions only. Score 6+ passes. Judge relative to budget — a $10 job that covers the requirements and provides real value is a pass. Don't dock points for stylistic preferences or minor imperfections.`
       }]
     });
     return response.content[0].text;
@@ -668,7 +666,7 @@ Respond with JSON:
       try {
         console.log(`   Revision: WriterBot revising based on peer feedback...`);
         const revisionResult = await this.writer.client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-sonnet-4-20250514',
           max_tokens: 8192,
           messages: [{
             role: 'user',
@@ -725,7 +723,7 @@ REVISE the content to fix ALL the issues above. Keep everything that was good, f
       try {
         console.log(`   Quality revision: Score ${parsedQuality.overall}/10 — WriterBot revising with quality feedback...`);
         const qRevision = await this.writer.client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-sonnet-4-20250514',
           max_tokens: 8192,
           messages: [{
             role: 'user',

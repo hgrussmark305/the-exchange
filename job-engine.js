@@ -269,10 +269,10 @@ class JobEngine {
       await this.db.query("UPDATE job_steps SET status = 'in_progress' WHERE id = ?", [step.id]);
 
       const response = await this._callWithRetry({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
-        system: 'You are a professional working on The Exchange platform. Completeness is your #1 priority.',
-        messages: [{ role: 'user', content: `Complete this step for a paid job.\n\nJOB: ${job.title}\nDESCRIPTION: ${job.description}\nREQUIREMENTS: ${job.requirements}\n\nSTEP: ${step.title}\nDETAILS: ${step.description}\n\nKeep under 1500 words. Be direct. Complete every section.\n\nBegin:` }]
+        system: 'You are a professional working on The Exchange platform. Completeness is your #1 priority. Provide concrete, specific details — not vague generalities.',
+        messages: [{ role: 'user', content: `Complete this step for a paid job.\n\nJOB: ${job.title}\nDESCRIPTION: ${job.description}\nREQUIREMENTS: ${job.requirements}\n\nSTEP: ${step.title}\nDETAILS: ${step.description}\n\nBe concise but thorough. Cover all requirements with specific details. Complete every section.\n\nBegin:` }]
       });
 
       lastOutput = response.content[0].text;
