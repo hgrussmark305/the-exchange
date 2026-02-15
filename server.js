@@ -15,6 +15,11 @@ const VercelDeployer = require('./vercel-deployer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // Initialize
@@ -1432,9 +1437,8 @@ app.get('/bounties', async (req, res) => {
     const bountyRows = bounties.map(b => {
       const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
       const statusColor = statusColors[b.status] || '#7a7a8e';
-      const isPaid = b.status === 'paid';
       return `
-        <div class="bounty-card ${isPaid ? 'has-deliverable' : ''}" ${isPaid ? `onclick="toggleDeliverable('${b.id}')"` : ''}>
+        <a href="/bounties/${b.id}" class="bounty-card">
           <div class="bounty-header">
             <div class="bounty-info">
               <h3>${b.title}</h3>
@@ -1444,22 +1448,14 @@ app.get('/bounties', async (req, res) => {
                 <span class="meta-tag">${b.category}</span>
                 ${b.claimed_by_bot ? `<span class="meta-tag">Bot: ${b.claimed_by_bot.substring(0, 8)}...</span>` : ''}
                 ${b.quality_score ? `<span class="meta-tag score">Score: ${b.quality_score}/10</span>` : ''}
-                ${isPaid ? '<span class="meta-tag view-tag">Click to view deliverable</span>' : ''}
               </div>
             </div>
             <div class="bounty-budget">
               <div class="budget-amount">$${(b.budget_cents / 100).toFixed(2)}</div>
-              ${isPaid ? '<div class="budget-label">PAID</div>' : '<div class="budget-label">BOUNTY</div>'}
+              ${b.status === 'paid' ? '<div class="budget-label">PAID</div>' : '<div class="budget-label">BOUNTY</div>'}
             </div>
           </div>
-          ${isPaid ? `<div class="deliverable" id="del-${b.id}" style="display:none;">
-            <div class="deliverable-header">
-              <span>Deliverable — Quality Score: ${b.quality_score}/10</span>
-              <span>Bot earned: $${(b.budget_cents * 0.85 / 100).toFixed(2)}</span>
-            </div>
-            <div class="deliverable-content" id="content-${b.id}">Loading...</div>
-          </div>` : ''}
-        </div>`;
+        </a>`;
     }).join('');
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1505,10 +1501,8 @@ app.get('/bounties', async (req, res) => {
         .stat-value { font-family:var(--font-mono); font-size:28px; font-weight:700; }
         .stat-label { color:var(--text-secondary); font-size:12px; margin-top:4px; text-transform:uppercase; letter-spacing:0.5px; }
         
-        .bounty-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; transition:all 0.2s; }
-        .bounty-card:hover { border-color:#2a2a3e; }
-        .bounty-card.has-deliverable { cursor:pointer; }
-        .bounty-card.has-deliverable:hover { border-color:var(--accent-purple); }
+        .bounty-card { display:block; text-decoration:none; color:inherit; background:var(--bg-card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; transition:all 0.2s; cursor:pointer; }
+        .bounty-card:hover { border-color:var(--accent-purple); transform:translateY(-1px); }
         .bounty-header { padding:20px 24px; display:flex; justify-content:space-between; align-items:start; gap:20px; }
         .bounty-info h3 { font-size:16px; font-weight:600; margin-bottom:6px; }
         .bounty-desc { color:var(--text-secondary); font-size:13px; margin-bottom:12px; line-height:1.5; }
@@ -1520,10 +1514,6 @@ app.get('/bounties', async (req, res) => {
         .bounty-budget { text-align:right; min-width:80px; }
         .budget-amount { font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--accent-green); }
         .budget-label { font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; }
-        
-        .deliverable { border-top:1px solid var(--border); background:#0d0d14; }
-        .deliverable-header { display:flex; justify-content:space-between; padding:12px 24px; font-size:12px; color:var(--accent-purple); font-family:var(--font-mono); border-bottom:1px solid var(--border); }
-        .deliverable-content { padding:24px; font-size:14px; line-height:1.7; color:var(--text-secondary); white-space:pre-wrap; font-family:var(--font-display); max-height:600px; overflow-y:auto; }
         
         .live-indicator { display:inline-flex; align-items:center; gap:6px; background:#00f0a012; border:1px solid #00f0a033; color:var(--accent-green); padding:4px 12px; border-radius:20px; font-size:12px; font-family:var(--font-mono); margin-bottom:16px; }
         .live-dot { width:6px; height:6px; border-radius:50%; background:var(--accent-green); animation:pulse 2s infinite; }
@@ -1569,31 +1559,239 @@ app.get('/bounties', async (req, res) => {
           ${bountyRows || '<p style="color:var(--text-secondary);">No bounties yet.</p>'}
         </div>
         
-        <script>
-          async function toggleDeliverable(id) {
-            const el = document.getElementById('del-' + id);
-            if (!el) return;
-            if (el.style.display === 'none') {
-              el.style.display = 'block';
-              const contentEl = document.getElementById('content-' + id);
-              if (contentEl.textContent === 'Loading...') {
-                try {
-                  const res = await fetch('/api/bounties/' + id);
-                  const data = await res.json();
-                  const approved = data.submissions?.find(s => s.status === 'approved');
-                  contentEl.textContent = approved ? approved.content : 'No approved submission found.';
-                } catch (e) {
-                  contentEl.textContent = 'Error loading deliverable.';
-                }
-              }
-            } else {
-              el.style.display = 'none';
-            }
-          }
-        </script>
       </body></html>`);
   } catch (error) {
     res.status(500).send('Error loading bounties');
+  }
+});
+
+// ============================================================================
+// BOUNTY DETAIL PAGE
+// ============================================================================
+
+app.get('/bounties/:bountyId', async (req, res) => {
+  try {
+    const bounty = await bountyBoard.getBounty(req.params.bountyId);
+    if (!bounty) return res.status(404).send('Bounty not found');
+
+    const submissions = await bountyBoard.getBountySubmissions(req.params.bountyId);
+    const bot = bounty.claimed_by_bot
+      ? (await db.query('SELECT * FROM bots WHERE id = ?', [bounty.claimed_by_bot]))[0]
+      : null;
+
+    const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
+    const statusColor = statusColors[bounty.status] || '#7a7a8e';
+
+    // Status timeline
+    const steps = [
+      { label: 'Posted', done: true, time: bounty.created_at },
+      { label: 'Claimed', done: !!bounty.claimed_at, time: bounty.claimed_at },
+      { label: 'Submitted', done: submissions.length > 0, time: submissions[0]?.created_at },
+      { label: 'Reviewed', done: !!bounty.quality_score, time: bounty.completed_at },
+      { label: 'Paid', done: bounty.status === 'paid', time: bounty.paid_at }
+    ];
+    const timelineHtml = steps.map((s, i) => `
+      <div class="step ${s.done ? 'done' : ''}">
+        <div class="step-dot"></div>
+        <div class="step-label">${s.label}</div>
+        ${s.time ? `<div class="step-time">${new Date(s.time).toLocaleString()}</div>` : ''}
+      </div>
+      ${i < steps.length - 1 ? '<div class="step-line ' + (s.done ? 'done' : '') + '"></div>' : ''}
+    `).join('');
+
+    // Bot info card
+    const botHtml = bot ? `
+      <div class="detail-section">
+        <h2>Assigned Bot</h2>
+        <div class="bot-card">
+          <div class="bot-avatar">${bot.name.charAt(0)}</div>
+          <div class="bot-info">
+            <div class="bot-name">${bot.name}</div>
+            <div class="bot-detail">${bot.personality || ''}</div>
+            <div class="bot-detail">Skills: ${bot.skills || 'General'}</div>
+            ${bot.total_earned ? `<div class="bot-detail earned">Total earned: $${(bot.total_earned / 100).toFixed(2)}</div>` : ''}
+          </div>
+        </div>
+      </div>` : bounty.status === 'open' ? `
+      <div class="detail-section">
+        <h2>Assigned Bot</h2>
+        <div class="waiting-card">
+          <div class="waiting-pulse"></div>
+          <span>Waiting for a bot to claim this bounty...</span>
+        </div>
+      </div>` : '';
+
+    // Submissions
+    const subsHtml = submissions.length ? submissions.map(s => {
+      const subStatusColor = s.status === 'approved' ? '#00f0a0' : s.status === 'rejected' ? '#ff4d6a' : '#ffb84d';
+      return `
+        <div class="submission">
+          <div class="sub-header">
+            <span class="sub-status" style="color:${subStatusColor};">${s.status.toUpperCase()}</span>
+            ${s.quality_score ? `<span class="sub-score">${s.quality_score}/10</span>` : ''}
+            <span class="sub-date">${new Date(s.created_at).toLocaleString()}</span>
+          </div>
+          ${s.feedback ? `<div class="sub-feedback">${s.feedback}</div>` : ''}
+          <div class="sub-content">${escapeHtml(s.content)}</div>
+        </div>`;
+    }).join('') : bounty.status === 'claimed' ? `
+      <div class="waiting-card">
+        <div class="waiting-pulse"></div>
+        <span>Bot is working on this bounty right now...</span>
+      </div>` : '';
+
+    // Payment info
+    const paymentHtml = bounty.status === 'paid' ? `
+      <div class="detail-section">
+        <h2>Payment</h2>
+        <div class="payment-card">
+          <div class="payment-row"><span>Bounty amount</span><span>$${(bounty.budget_cents / 100).toFixed(2)}</span></div>
+          <div class="payment-row"><span>Platform fee (15%)</span><span>-$${(bounty.budget_cents * 0.15 / 100).toFixed(2)}</span></div>
+          <div class="payment-row total"><span>Bot earned</span><span>$${(bounty.budget_cents * 0.85 / 100).toFixed(2)}</span></div>
+        </div>
+      </div>` : '';
+
+    res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>${bounty.title} — The Exchange</title>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+      <style>
+        :root {
+          --bg-primary: #0a0a0f;
+          --bg-card: #12121a;
+          --border: #1e1e2e;
+          --text-primary: #e8e8ef;
+          --text-secondary: #7a7a8e;
+          --accent-green: #00f0a0;
+          --accent-blue: #4d8eff;
+          --accent-amber: #ffb84d;
+          --accent-purple: #a855f7;
+          --font-display: 'Sora', sans-serif;
+          --font-mono: 'JetBrains Mono', monospace;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: var(--font-display); background: var(--bg-primary); color: var(--text-primary); min-height:100vh; }
+        body::before { content:''; position:fixed; top:-200px; left:50%; transform:translateX(-50%); width:800px; height:600px; background:radial-gradient(ellipse, #a855f722 0%, transparent 70%); pointer-events:none; z-index:0; }
+
+        .nav { position:sticky; top:0; z-index:100; padding:0 24px; height:64px; display:flex; align-items:center; justify-content:space-between; background:rgba(10,10,15,0.8); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); }
+        .nav-logo { font-family:var(--font-mono); font-weight:700; font-size:16px; letter-spacing:-0.5px; display:flex; align-items:center; gap:10px; cursor:pointer; text-decoration:none; color:var(--text-primary); }
+        .nav-logo .pulse { width:8px; height:8px; border-radius:50%; background:var(--accent-green); box-shadow:0 0 12px var(--accent-green); animation:pulse 2s infinite; }
+        .nav-links { display:flex; gap:8px; }
+        .nav-links a { color:var(--text-secondary); text-decoration:none; padding:8px 16px; border-radius:8px; font-size:14px; transition:all 0.2s; }
+        .nav-links a:hover { color:var(--text-primary); background:#1e1e2e; }
+        .nav-links a.active { color:var(--accent-purple); background:#a855f712; }
+
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes spin { to { transform:rotate(360deg); } }
+
+        .container { max-width:900px; margin:0 auto; padding:32px 20px 80px; position:relative; z-index:1; }
+
+        .back-link { display:inline-flex; align-items:center; gap:6px; color:var(--text-secondary); text-decoration:none; font-size:14px; margin-bottom:24px; transition:color 0.2s; }
+        .back-link:hover { color:var(--text-primary); }
+
+        .bounty-title { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:12px; line-height:1.3; }
+
+        .top-meta { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:32px; }
+        .status-badge { padding:4px 14px; border-radius:20px; font-size:12px; font-weight:600; font-family:var(--font-mono); }
+        .top-budget { font-family:var(--font-mono); font-size:20px; font-weight:700; color:var(--accent-green); }
+        .top-category { color:var(--text-secondary); font-size:13px; background:var(--bg-card); border:1px solid var(--border); padding:4px 12px; border-radius:20px; }
+
+        /* Timeline */
+        .timeline { display:flex; align-items:flex-start; gap:0; margin-bottom:40px; background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:24px; overflow-x:auto; }
+        .step { display:flex; flex-direction:column; align-items:center; min-width:80px; }
+        .step-dot { width:14px; height:14px; border-radius:50%; border:2px solid var(--border); background:var(--bg-primary); transition:all 0.3s; }
+        .step.done .step-dot { background:var(--accent-purple); border-color:var(--accent-purple); box-shadow:0 0 12px #a855f744; }
+        .step-label { font-size:12px; font-weight:600; margin-top:8px; }
+        .step-time { font-size:10px; color:var(--text-secondary); font-family:var(--font-mono); margin-top:2px; }
+        .step-line { flex:1; height:2px; background:var(--border); margin-top:6px; min-width:20px; }
+        .step-line.done { background:var(--accent-purple); }
+
+        /* Sections */
+        .detail-section { margin-bottom:32px; }
+        .detail-section h2 { font-size:16px; font-weight:700; margin-bottom:16px; letter-spacing:-0.3px; }
+
+        .brief-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:24px; }
+        .brief-row { margin-bottom:16px; }
+        .brief-row:last-child { margin-bottom:0; }
+        .brief-label { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary); margin-bottom:4px; }
+        .brief-value { font-size:14px; line-height:1.7; color:var(--text-primary); }
+
+        /* Bot card */
+        .bot-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px; display:flex; gap:16px; align-items:center; }
+        .bot-avatar { width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg, var(--accent-purple), var(--accent-blue)); display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; flex-shrink:0; }
+        .bot-name { font-size:16px; font-weight:700; margin-bottom:2px; }
+        .bot-detail { font-size:13px; color:var(--text-secondary); line-height:1.5; }
+        .bot-detail.earned { color:var(--accent-green); font-family:var(--font-mono); font-size:12px; margin-top:4px; }
+
+        /* Waiting state */
+        .waiting-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:24px; display:flex; align-items:center; gap:12px; color:var(--text-secondary); font-size:14px; }
+        .waiting-pulse { width:10px; height:10px; border-radius:50%; background:var(--accent-amber); animation:pulse 1.5s infinite; flex-shrink:0; }
+
+        /* Submissions */
+        .submission { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:12px; }
+        .sub-header { display:flex; gap:12px; align-items:center; padding:16px 24px; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:12px; }
+        .sub-status { font-weight:700; }
+        .sub-score { color:var(--accent-green); }
+        .sub-date { color:var(--text-secondary); margin-left:auto; }
+        .sub-feedback { padding:12px 24px; background:#0d0d14; font-size:13px; color:var(--accent-amber); border-bottom:1px solid var(--border); font-style:italic; }
+        .sub-content { padding:24px; font-size:14px; line-height:1.8; color:var(--text-secondary); white-space:pre-wrap; max-height:800px; overflow-y:auto; }
+
+        /* Payment */
+        .payment-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px 24px; }
+        .payment-row { display:flex; justify-content:space-between; padding:8px 0; font-size:14px; color:var(--text-secondary); }
+        .payment-row.total { border-top:1px solid var(--border); margin-top:8px; padding-top:16px; color:var(--accent-green); font-weight:700; font-family:var(--font-mono); font-size:16px; }
+
+        @media(max-width:600px) { .timeline { flex-wrap:wrap; gap:8px; } .step-line { display:none; } .bounty-title { font-size:22px; } }
+      </style></head>
+      <body>
+        <nav class="nav">
+          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/bounties" class="active">Bounty Board</a>
+            <a href="/dashboard.html">Dashboard</a>
+          </div>
+        </nav>
+
+        <div class="container">
+          <a href="/bounties" class="back-link">&larr; Back to Bounty Board</a>
+
+          <h1 class="bounty-title">${escapeHtml(bounty.title)}</h1>
+
+          <div class="top-meta">
+            <span class="status-badge" style="background:${statusColor}18;color:${statusColor};border:1px solid ${statusColor}44;">${bounty.status.toUpperCase()}</span>
+            <span class="top-budget">$${(bounty.budget_cents / 100).toFixed(2)}</span>
+            <span class="top-category">${bounty.category}</span>
+            ${bounty.quality_score ? `<span class="top-category" style="color:var(--accent-green);border-color:var(--accent-green)44;">Score: ${bounty.quality_score}/10</span>` : ''}
+          </div>
+
+          <div class="timeline">${timelineHtml}</div>
+
+          <div class="detail-section">
+            <h2>Brief</h2>
+            <div class="brief-card">
+              <div class="brief-row">
+                <div class="brief-label">Description</div>
+                <div class="brief-value">${escapeHtml(bounty.description)}</div>
+              </div>
+              ${bounty.requirements ? `<div class="brief-row">
+                <div class="brief-label">Requirements</div>
+                <div class="brief-value">${escapeHtml(bounty.requirements)}</div>
+              </div>` : ''}
+            </div>
+          </div>
+
+          ${botHtml}
+
+          ${submissions.length || bounty.status === 'claimed' ? `<div class="detail-section">
+            <h2>Submissions</h2>
+            ${subsHtml}
+          </div>` : ''}
+
+          ${paymentHtml}
+        </div>
+      </body></html>`);
+  } catch (error) {
+    res.status(500).send('Error loading bounty');
   }
 });
 
