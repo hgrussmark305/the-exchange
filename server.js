@@ -1697,13 +1697,14 @@ app.get('/bounties', async (req, res) => {
 
     const bountyRows = bounties.map(b => {
       const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
+      const filterStatus = (b.status === 'claimed') ? 'in_progress' : (b.status === 'completed' || b.status === 'paid') ? 'completed' : b.status;
       const statusColor = statusColors[b.status] || '#7a7a8e';
       return `
-        <a href="/bounties/${b.id}" class="bounty-card">
+        <a href="/bounties/${b.id}" class="bounty-card" data-status="${filterStatus}" data-title="${escapeHtml(b.title.toLowerCase())}" data-category="${b.category}">
           <div class="bounty-header">
             <div class="bounty-info">
-              <h3>${b.title}</h3>
-              <p class="bounty-desc">${b.description.substring(0, 200)}${b.description.length > 200 ? '...' : ''}</p>
+              <h3>${escapeHtml(b.title)}</h3>
+              <p class="bounty-desc">${escapeHtml(b.description.substring(0, 200))}${b.description.length > 200 ? '...' : ''}</p>
               <div class="bounty-meta">
                 <span class="status-badge" style="background:${statusColor}18;color:${statusColor};border:1px solid ${statusColor}44;">${b.status.toUpperCase()}</span>
                 <span class="meta-tag">${b.category}</span>
@@ -1762,6 +1763,9 @@ app.get('/bounties', async (req, res) => {
         .stat-value { font-family:var(--font-mono); font-size:28px; font-weight:700; }
         .stat-label { color:var(--text-secondary); font-size:12px; margin-top:4px; text-transform:uppercase; letter-spacing:0.5px; }
         
+        .filter-tab { padding:6px 16px; border-radius:20px; border:1px solid var(--border); background:transparent; color:var(--text-secondary); font-family:var(--font-display); font-size:13px; cursor:pointer; transition:all 0.2s; }
+        .filter-tab:hover { border-color:#2a2a3e; color:var(--text-primary); }
+        .filter-tab.active { background:var(--accent-purple); border-color:var(--accent-purple); color:white; }
         .bounty-card { display:block; text-decoration:none; color:inherit; background:var(--bg-card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; transition:all 0.2s; cursor:pointer; }
         .bounty-card:hover { border-color:var(--accent-purple); transform:translateY(-1px); }
         .bounty-header { padding:20px 24px; display:flex; justify-content:space-between; align-items:start; gap:20px; }
@@ -1819,9 +1823,44 @@ app.get('/bounties', async (req, res) => {
             </div>
           </div>
           
-          ${bountyRows || '<p style="color:var(--text-secondary);">No bounties yet.</p>'}
+          <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+            <button class="filter-tab active" data-filter="all">All</button>
+            <button class="filter-tab" data-filter="open">Open</button>
+            <button class="filter-tab" data-filter="in_progress">In Progress</button>
+            <button class="filter-tab" data-filter="completed">Completed</button>
+            <input type="text" id="bounty-search" placeholder="Search bounties..." style="margin-left:auto;padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:200px;">
+          </div>
+
+          <div id="bounty-list">
+            ${bountyRows || '<p style="color:var(--text-secondary);">No bounties yet.</p>'}
+          </div>
         </div>
-        
+        <script>
+          // Filter tabs
+          let activeFilter = 'all';
+          document.querySelectorAll('.filter-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+              document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+              tab.classList.add('active');
+              activeFilter = tab.dataset.filter;
+              applyFilters();
+            });
+          });
+
+          // Search
+          document.getElementById('bounty-search').addEventListener('input', applyFilters);
+
+          function applyFilters() {
+            const search = document.getElementById('bounty-search').value.toLowerCase();
+            document.querySelectorAll('.bounty-card').forEach(card => {
+              const status = card.dataset.status;
+              const title = card.dataset.title || '';
+              const matchesFilter = activeFilter === 'all' || status === activeFilter;
+              const matchesSearch = !search || title.includes(search);
+              card.style.display = (matchesFilter && matchesSearch) ? '' : 'none';
+            });
+          }
+        </script>
       </body></html>`);
   } catch (error) {
     res.status(500).send('Error loading bounties');
