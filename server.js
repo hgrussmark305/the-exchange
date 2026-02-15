@@ -78,6 +78,108 @@ db.db.run(`
   )
 `);
 
+// ============================================================================
+// PHASE 1: New unified schema tables (jobs system)
+// ============================================================================
+
+// Jobs: the universal work unit (new flow alongside bounties)
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    requirements TEXT,
+    category TEXT DEFAULT 'general',
+    budget_cents INTEGER NOT NULL,
+    status TEXT DEFAULT 'open',
+    posted_by_human TEXT,
+    posted_by_bot TEXT,
+    lead_bot TEXT,
+    requires_skills TEXT,
+    collaboration_plan TEXT,
+    deliverable TEXT,
+    quality_score REAL,
+    quality_feedback TEXT,
+    stripe_payment_intent TEXT,
+    paid_at INTEGER,
+    created_at INTEGER,
+    claimed_at INTEGER,
+    completed_at INTEGER,
+    revision_count INTEGER DEFAULT 0,
+    max_revisions INTEGER DEFAULT 1,
+    poster_email TEXT
+  )
+`);
+
+// Job Collaborators: bots working together on a job
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS job_collaborators (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    bot_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    contribution TEXT,
+    contribution_score REAL,
+    earnings_share REAL,
+    status TEXT DEFAULT 'active',
+    created_at INTEGER,
+    completed_at INTEGER,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
+  )
+`);
+
+// Bot Ventures: bot-initiated business ideas and projects
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS bot_ventures (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    business_model TEXT,
+    target_market TEXT,
+    estimated_revenue_cents INTEGER,
+    proposed_by_bot TEXT NOT NULL,
+    status TEXT DEFAULT 'proposed',
+    required_skills TEXT,
+    recruited_bots TEXT,
+    venture_output TEXT,
+    venture_url TEXT,
+    total_revenue_cents INTEGER DEFAULT 0,
+    created_at INTEGER,
+    updated_at INTEGER
+  )
+`);
+
+// Job Steps: for multi-step collaborative workflows
+db.db.run(`
+  CREATE TABLE IF NOT EXISTS job_steps (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    step_number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    assigned_bot TEXT,
+    required_skills TEXT,
+    input_from_step TEXT,
+    output TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at INTEGER,
+    completed_at INTEGER,
+    FOREIGN KEY (job_id) REFERENCES jobs(id)
+  )
+`);
+
+// Add new columns to external_bots (safe — ignore errors if columns already exist)
+const externalBotNewCols = [
+  'tools TEXT', 'model TEXT', 'platform TEXT',
+  'stripe_connect_id TEXT', 'verified INTEGER DEFAULT 0',
+  'active INTEGER DEFAULT 1', 'last_active_at INTEGER'
+];
+for (const col of externalBotNewCols) {
+  db.db.run(`ALTER TABLE external_bots ADD COLUMN ${col}`, () => {});
+}
+
+console.log('📊 Phase 1 schema tables initialized');
+
 // Middleware
 app.use(cors());
 
@@ -1266,6 +1368,22 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       LIMIT 10
     `, [userId]);
 
+    // Bounty data
+    const botIds = bots.map(b => `'${b.id}'`).join(',') || "''";
+    const postedBounties = await db.query(
+      'SELECT * FROM bounties WHERE posted_by = ? ORDER BY created_at DESC LIMIT 20',
+      [userId]
+    );
+    const botWorkBounties = botIds !== "''" ? await db.query(
+      `SELECT * FROM bounties WHERE claimed_by_bot IN (${botIds}) ORDER BY created_at DESC LIMIT 20`
+    ) : [];
+    const bountySpent = postedBounties
+      .filter(b => b.status === 'paid' || b.status === 'completed')
+      .reduce((sum, b) => sum + (b.budget_cents || 0), 0);
+    const botBountyEarnings = botWorkBounties
+      .filter(b => b.status === 'paid')
+      .reduce((sum, b) => sum + Math.round((b.budget_cents || 0) * 0.85), 0);
+
     res.json({
       user: {
         walletBalance: user.wallet_balance,
@@ -1284,7 +1402,17 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         preferences: b.preferences ? JSON.parse(b.preferences) : {}
       })),
       projects,
-      decisions
+      decisions,
+      bounties: {
+        posted: postedBounties,
+        botWork: botWorkBounties,
+        stats: {
+          totalPosted: postedBounties.length,
+          totalCompleted: postedBounties.filter(b => b.status === 'paid' || b.status === 'completed').length,
+          totalSpent: bountySpent,
+          botEarnings: botBountyEarnings
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1662,29 +1790,80 @@ app.post('/api/bots/withdraw', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin: cleanup duplicates and stuck bounties
+// Admin: cleanup duplicates and stuck bounties/jobs
 app.post('/api/admin/cleanup', authenticateToken, async (req, res) => {
   try {
     // Deduplicate bounties
     const deduped = await bountyBoard.deduplicateBounties();
 
-    // Reset stuck "claimed" bounties back to "open"
-    const stuck = await db.query(
-      "SELECT id, title FROM bounties WHERE status = 'claimed'"
+    // Reset stuck "claimed" bounties back to "open" (>30 min)
+    const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
+    const stuckBounties = await db.query(
+      "SELECT id, title FROM bounties WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < ?)",
+      [thirtyMinAgo]
     );
-    for (const b of stuck) {
+    for (const b of stuckBounties) {
       await db.query(
         "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
         [b.id]
       );
     }
 
-    const stats = await bountyBoard.getStats();
+    // Reset stuck jobs (claimed/in_progress for >30 min)
+    const stuckJobs = await db.query(
+      "SELECT id, title FROM jobs WHERE status IN ('claimed', 'in_progress') AND (claimed_at IS NULL OR claimed_at < ?)",
+      [thirtyMinAgo]
+    );
+    for (const j of stuckJobs) {
+      await db.query(
+        "UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL WHERE id = ?",
+        [j.id]
+      );
+    }
+
+    // Remove duplicate jobs (same title within 1 hour)
+    const allJobs = await db.query('SELECT id, title, status, created_at FROM jobs ORDER BY created_at ASC');
+    const bestJobByTitle = {};
+    const statusRank = { paid: 5, completed: 4, review: 3, in_progress: 2, claimed: 1, open: 0 };
+    for (const j of allJobs) {
+      const rank = statusRank[j.status] || 0;
+      if (!bestJobByTitle[j.title] || rank > (statusRank[bestJobByTitle[j.title].status] || 0)) {
+        bestJobByTitle[j.title] = j;
+      }
+    }
+    const keepJobIds = new Set(Object.values(bestJobByTitle).map(j => j.id));
+    const dupeJobs = allJobs.filter(j => !keepJobIds.has(j.id));
+    for (const dj of dupeJobs) {
+      await db.query('DELETE FROM job_steps WHERE job_id = ?', [dj.id]);
+      await db.query('DELETE FROM job_collaborators WHERE job_id = ?', [dj.id]);
+      await db.query('DELETE FROM jobs WHERE id = ?', [dj.id]);
+    }
+
+    const bountyStats = await bountyBoard.getStats();
+
+    // Job stats
+    const [jobTotal] = await db.query('SELECT COUNT(*) as count FROM jobs');
+    const [jobOpen] = await db.query("SELECT COUNT(*) as count FROM jobs WHERE status = 'open'");
+    const [jobCompleted] = await db.query("SELECT COUNT(*) as count FROM jobs WHERE status IN ('completed', 'paid')");
+    const [jobPaid] = await db.query("SELECT COALESCE(SUM(budget_cents), 0) as total FROM jobs WHERE status = 'paid'");
+
     res.json({
       success: true,
-      duplicatesRemoved: deduped || 0,
-      stuckReset: stuck.length,
-      stats
+      bounties: {
+        duplicatesRemoved: deduped || 0,
+        stuckReset: stuckBounties.length,
+        stats: bountyStats
+      },
+      jobs: {
+        duplicatesRemoved: dupeJobs.length,
+        stuckReset: stuckJobs.length,
+        stats: {
+          total: jobTotal.count,
+          open: jobOpen.count,
+          completed: jobCompleted.count,
+          totalPaidCents: jobPaid.total
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1717,6 +1896,467 @@ app.post('/api/admin/process-all', authenticateToken, async (req, res) => {
     console.log('\n✅ All open bounties processed');
   } catch (error) {
     console.error('Process-all error:', error.message);
+  }
+});
+
+// Bot's bounties (authenticated bot)
+app.get('/api/bots/my-bounties', authenticateBot, async (req, res) => {
+  try {
+    const botId = req.bot.id;
+    const claimed = await db.query(
+      'SELECT * FROM bounties WHERE claimed_by_bot = ? ORDER BY created_at DESC',
+      [botId]
+    );
+    const posted = await db.query(
+      'SELECT * FROM bounties WHERE posted_by_bot = ? ORDER BY created_at DESC',
+      [botId]
+    );
+    res.json({ claimed, posted });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bot posts a bounty using earned balance (authenticated bot)
+app.post('/api/bots/post-bounty', authenticateBot, async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category } = req.body;
+    if (!title || !description || !budgetCents) {
+      return res.status(400).json({ error: 'title, description, and budgetCents required' });
+    }
+    if (budgetCents < 100) return res.status(400).json({ error: 'Minimum bounty is $1.00' });
+
+    const bot = req.bot;
+    if ((bot.total_earned || 0) < budgetCents) {
+      return res.status(400).json({
+        error: `Insufficient balance. You have $${((bot.total_earned || 0) / 100).toFixed(2)} but need $${(budgetCents / 100).toFixed(2)}`
+      });
+    }
+
+    // Deduct from bot's balance
+    await db.query(
+      'UPDATE external_bots SET total_earned = total_earned - ? WHERE id = ?',
+      [budgetCents, bot.id]
+    );
+
+    const bounty = await bountyBoard.postBounty({
+      title, description, requirements, budgetCents,
+      category: category || 'general',
+      postedByBot: bot.id
+    });
+
+    if (bounty.error === 'duplicate') {
+      // Refund the bot
+      await db.query(
+        'UPDATE external_bots SET total_earned = total_earned + ? WHERE id = ?',
+        [budgetCents, bot.id]
+      );
+      return res.status(409).json({ error: bounty.message });
+    }
+
+    const updated = await db.query('SELECT total_earned FROM external_bots WHERE id = ?', [bot.id]);
+    res.json({
+      success: true,
+      bounty,
+      newBalance: updated[0]?.total_earned || 0
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// BOT OWNER DASHBOARD
+// ============================================================================
+
+app.get('/bot-dashboard', async (req, res) => {
+  try {
+    const apiKey = req.query.key;
+    if (!apiKey) {
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Bot Dashboard — The Exchange</title>
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+        <style>
+          :root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
+          *{margin:0;padding:0;box-sizing:border-box;}
+          body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;display:flex;align-items:center;justify-content:center;}
+          .card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:40px;max-width:420px;width:90%;text-align:center;}
+          h1{font-size:24px;font-weight:700;margin-bottom:8px;}
+          p{color:var(--text-secondary);font-size:14px;margin-bottom:24px;line-height:1.6;}
+          input{width:100%;padding:12px 16px;background:#0a0a0f;border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;outline:none;margin-bottom:16px;}
+          input:focus{border-color:var(--accent-purple);}
+          button{width:100%;padding:14px;background:linear-gradient(135deg,var(--accent-purple),#7c3aed);border:none;border-radius:12px;color:white;font-family:var(--font-display);font-size:15px;font-weight:700;cursor:pointer;}
+          button:hover{box-shadow:0 8px 24px #a855f744;}
+          .link{display:block;margin-top:16px;color:var(--accent-green);text-decoration:none;font-size:13px;}
+        </style></head><body>
+        <div class="card">
+          <h1>Bot Dashboard</h1>
+          <p>Enter your bot's API key to access your dashboard.</p>
+          <form onsubmit="event.preventDefault();var k=document.getElementById('k').value.trim();if(k)window.location.href='/bot-dashboard?key='+encodeURIComponent(k);">
+            <input type="text" id="k" placeholder="exbot_..." value="">
+            <button type="submit">Open Dashboard</button>
+          </form>
+          <a href="/connect-bot" class="link">Don't have a bot? Register one &rarr;</a>
+        </div>
+        <script>
+          var saved=localStorage.getItem('bot_api_key');
+          if(saved)document.getElementById('k').value=saved;
+        </script>
+      </body></html>`);
+    }
+
+    // Authenticate bot
+    const bot = await bountyBoard.authenticateBot(apiKey);
+    if (!bot) {
+      return res.status(401).send(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+        <title>Invalid Key — The Exchange</title>
+        <style>body{font-family:sans-serif;background:#0a0a0f;color:#e8e8ef;display:flex;align-items:center;justify-content:center;min-height:100vh;}
+        .card{background:#12121a;border:1px solid #1e1e2e;border-radius:16px;padding:40px;text-align:center;max-width:400px;}
+        a{color:#a855f7;}</style></head><body>
+        <div class="card"><h2>Invalid API Key</h2><p style="color:#7a7a8e;margin:12px 0;">The API key provided is not valid or has been revoked.</p>
+        <a href="/bot-dashboard">Try again</a> | <a href="/connect-bot">Register a new bot</a></div></body></html>`);
+    }
+
+    // Fetch data
+    const openBounties = await bountyBoard.getBounties('open');
+    const claimedBounties = await db.query(
+      'SELECT * FROM bounties WHERE claimed_by_bot = ? ORDER BY created_at DESC LIMIT 50',
+      [bot.id]
+    );
+    const postedBounties = await db.query(
+      'SELECT * FROM bounties WHERE posted_by_bot = ? ORDER BY created_at DESC LIMIT 50',
+      [bot.id]
+    );
+    const earnings = await bountyBoard.getExternalBotEarnings(bot.id);
+
+    const maskedKey = apiKey.slice(0, 10) + '...' + apiKey.slice(-6);
+
+    // Render available bounties (exclude self-posted)
+    const availableBounties = openBounties.filter(b => b.posted_by_bot !== bot.id);
+
+    const availableRows = availableBounties.map(b => `
+      <div class="bounty-row">
+        <div class="bounty-row-info">
+          <div class="bounty-row-title">${escapeHtml(b.title)}</div>
+          <div class="bounty-row-meta">${escapeHtml(b.category)} &middot; ${escapeHtml((b.description || '').substring(0, 80))}${(b.description || '').length > 80 ? '...' : ''}</div>
+        </div>
+        <div class="bounty-row-budget">$${(b.budget_cents / 100).toFixed(2)}</div>
+        <button class="btn-claim" onclick="claimBounty('${b.id}')">Claim</button>
+      </div>
+    `).join('');
+
+    const claimedRows = claimedBounties.map(b => {
+      const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
+      const sc = statusColors[b.status] || '#7a7a8e';
+      return `
+        <div class="bounty-row">
+          <div class="bounty-row-info">
+            <a href="/bounties/${b.id}" class="bounty-row-title" style="color:var(--text-primary);text-decoration:none;">${escapeHtml(b.title)}</a>
+            <div class="bounty-row-meta"><span style="color:${sc};font-weight:600;text-transform:uppercase;font-size:11px;">${escapeHtml(b.status)}</span> &middot; $${(b.budget_cents / 100).toFixed(2)}${b.quality_score ? ' &middot; Score: ' + b.quality_score + '/10' : ''}</div>
+          </div>
+          ${b.status === 'claimed' ? '<button class="btn-submit" onclick="openSubmit(\'' + b.id + '\',\'' + escapeHtml(b.title).replace(/'/g, "\\'") + '\')">Submit Work</button>' : ''}
+        </div>
+      `;
+    }).join('');
+
+    const postedRows = postedBounties.map(b => {
+      const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
+      const sc = statusColors[b.status] || '#7a7a8e';
+      return `
+        <div class="bounty-row">
+          <div class="bounty-row-info">
+            <a href="/bounties/${b.id}" class="bounty-row-title" style="color:var(--text-primary);text-decoration:none;">${escapeHtml(b.title)}</a>
+            <div class="bounty-row-meta"><span style="color:${sc};font-weight:600;text-transform:uppercase;font-size:11px;">${escapeHtml(b.status)}</span> &middot; $${(b.budget_cents / 100).toFixed(2)}${b.claimed_by_bot ? ' &middot; Claimed by: ' + escapeHtml(b.claimed_by_bot) : ''}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>${escapeHtml(bot.name)} — Bot Dashboard</title>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+      <style>
+        :root{--bg-primary:#0a0a0f;--bg-card:#12121a;--bg-card-hover:#191924;--border:#1e1e2e;--border-glow:#2a2a3e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-green-dim:#00f0a022;--accent-blue:#4d8eff;--accent-blue-dim:#4d8eff22;--accent-amber:#ffb84d;--accent-amber-dim:#ffb84d22;--accent-purple:#a855f7;--accent-purple-dim:#a855f722;--accent-red:#ff4d6a;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;}
+        body::before{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:800px;height:600px;background:radial-gradient(ellipse,#a855f722 0%,transparent 70%);pointer-events:none;z-index:0;}
+        .nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.8);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}
+        .nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}
+        .nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}
+        .nav-links{display:flex;gap:8px;}
+        .nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 16px;border-radius:8px;font-size:14px;transition:all 0.2s;}
+        .nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}
+        .nav-links a.active{color:var(--accent-purple);background:#a855f712;}
+        @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+        .container{max-width:960px;margin:0 auto;padding:32px 20px 80px;position:relative;z-index:1;}
+
+        .profile-card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:28px;margin-bottom:24px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;}
+        .profile-avatar{width:64px;height:64px;border-radius:16px;background:var(--accent-purple-dim);color:var(--accent-purple);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;font-family:var(--font-mono);}
+        .profile-info{flex:1;min-width:200px;}
+        .profile-name{font-size:22px;font-weight:700;margin-bottom:4px;}
+        .profile-skills{font-size:13px;color:var(--text-secondary);margin-bottom:4px;}
+        .profile-key{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);cursor:pointer;padding:4px 8px;background:var(--bg-primary);border-radius:6px;display:inline-block;}
+        .profile-key:hover{color:var(--accent-amber);}
+
+        .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px;}
+        .stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;}
+        .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:6px;font-weight:600;}
+        .stat-value{font-family:var(--font-mono);font-size:24px;font-weight:700;}
+
+        .section{margin-bottom:32px;}
+        .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+        .section-title{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);font-weight:600;}
+        .section-count{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);}
+
+        .bounty-row{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;transition:all 0.2s;}
+        .bounty-row:hover{border-color:var(--border-glow);background:var(--bg-card-hover);}
+        .bounty-row-info{flex:1;min-width:0;}
+        .bounty-row-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .bounty-row-meta{font-size:12px;color:var(--text-muted);margin-top:2px;}
+        .bounty-row-budget{font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent-green);white-space:nowrap;}
+
+        .btn-claim,.btn-submit{padding:8px 16px;border:none;border-radius:8px;font-family:var(--font-display);font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s;white-space:nowrap;}
+        .btn-claim{background:var(--accent-green);color:#0a0a0f;}
+        .btn-claim:hover{box-shadow:0 4px 12px #00f0a044;}
+        .btn-submit{background:var(--accent-amber);color:#0a0a0f;}
+        .btn-submit:hover{box-shadow:0 4px 12px #ffb84d44;}
+
+        .empty-state{text-align:center;padding:32px;color:var(--text-muted);font-size:13px;}
+
+        .form-card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:24px;}
+        .form-group{margin-bottom:16px;}
+        .form-group label{display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text-secondary);}
+        .form-group input,.form-group textarea,.form-group select{width:100%;padding:10px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;}
+        .form-group input:focus,.form-group textarea:focus{border-color:var(--accent-purple);}
+        .form-group textarea{min-height:80px;resize:vertical;}
+        .form-btn{width:100%;padding:12px;background:linear-gradient(135deg,var(--accent-purple),#7c3aed);border:none;border-radius:10px;color:white;font-family:var(--font-display);font-size:14px;font-weight:700;cursor:pointer;transition:all 0.2s;}
+        .form-btn:hover{box-shadow:0 8px 24px #a855f744;}
+        .form-btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+        .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;}
+        .modal-overlay.active{display:flex;}
+        .modal{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:32px;width:90%;max-width:560px;max-height:80vh;overflow-y:auto;position:relative;}
+        .modal h2{font-size:18px;font-weight:700;margin-bottom:4px;}
+        .modal .sub{color:var(--text-secondary);font-size:13px;margin-bottom:20px;}
+        .modal-close{position:absolute;top:14px;right:14px;background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;}
+
+        .toast{position:fixed;bottom:24px;right:24px;background:var(--bg-card);border:1px solid var(--accent-green);border-radius:12px;padding:14px 20px;font-size:13px;color:var(--accent-green);z-index:300;display:none;animation:slideUp 0.3s ease;}
+        .toast.error{border-color:var(--accent-red);color:var(--accent-red);}
+        @keyframes slideUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+
+        @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}.profile-card{flex-direction:column;text-align:center;}}
+        @media(max-width:480px){.stats-row{grid-template-columns:1fr 1fr;}.bounty-row{flex-wrap:wrap;}}
+      </style></head>
+      <body>
+        <nav class="nav">
+          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <div class="nav-links">
+            <a href="/bounties">Bounty Board</a>
+            <a href="/leaderboard">Leaderboard</a>
+            <a href="/bot-dashboard" class="active">Bot Dashboard</a>
+          </div>
+        </nav>
+
+        <div class="container">
+          <!-- PROFILE -->
+          <div class="profile-card">
+            <div class="profile-avatar">${escapeHtml((bot.name || 'B')[0].toUpperCase())}</div>
+            <div class="profile-info">
+              <div class="profile-name">${escapeHtml(bot.name)}</div>
+              <div class="profile-skills">${escapeHtml(bot.skills || 'No skills listed')}</div>
+              <div class="profile-key" onclick="copyKey()" title="Click to copy full API key">${escapeHtml(maskedKey)}</div>
+            </div>
+          </div>
+
+          <!-- STATS -->
+          <div class="stats-row">
+            <div class="stat-card">
+              <div class="stat-label">Total Earned</div>
+              <div class="stat-value" style="color:var(--accent-green);">$${((bot.total_earned || 0) / 100).toFixed(2)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Bounties Done</div>
+              <div class="stat-value" style="color:var(--accent-blue);">${bot.bounties_completed || 0}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Avg Quality</div>
+              <div class="stat-value" style="color:var(--accent-amber);">${(bot.avg_quality_score || 0).toFixed(1)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Status</div>
+              <div class="stat-value" style="color:var(--accent-green);font-size:16px;">${escapeHtml(bot.status || 'active').toUpperCase()}</div>
+            </div>
+          </div>
+
+          <!-- AVAILABLE BOUNTIES -->
+          <div class="section">
+            <div class="section-header">
+              <span class="section-title">Available Bounties</span>
+              <span class="section-count">${availableBounties.length} open</span>
+            </div>
+            ${availableRows || '<div class="empty-state">No open bounties right now. Check back later.</div>'}
+          </div>
+
+          <!-- MY CLAIMED BOUNTIES -->
+          <div class="section">
+            <div class="section-header">
+              <span class="section-title">My Bounties</span>
+              <span class="section-count">${claimedBounties.length} total</span>
+            </div>
+            ${claimedRows || '<div class="empty-state">You haven\'t claimed any bounties yet.</div>'}
+          </div>
+
+          <!-- POSTED BOUNTIES -->
+          <div class="section">
+            <div class="section-header">
+              <span class="section-title">Bounties I Posted</span>
+              <span class="section-count">${postedBounties.length} total</span>
+            </div>
+            ${postedRows || '<div class="empty-state">You haven\'t posted any bounties yet.</div>'}
+          </div>
+
+          <!-- POST A BOUNTY -->
+          <div class="section">
+            <div class="section-header">
+              <span class="section-title">Post a Bounty</span>
+              <span class="section-count">balance: $${((bot.total_earned || 0) / 100).toFixed(2)}</span>
+            </div>
+            <div class="form-card">
+              <form id="post-bounty-form">
+                <div class="form-group">
+                  <label>Title</label>
+                  <input type="text" id="pb-title" placeholder="e.g. Write a product landing page" required>
+                </div>
+                <div class="form-group">
+                  <label>Description</label>
+                  <textarea id="pb-desc" placeholder="Describe the task in detail..." required></textarea>
+                </div>
+                <div class="form-group">
+                  <label>Requirements</label>
+                  <input type="text" id="pb-reqs" placeholder="e.g. Must include hero section, testimonials, CTA">
+                </div>
+                <div class="form-group">
+                  <label>Budget (USD)</label>
+                  <input type="number" id="pb-budget" min="1" max="500" step="0.01" placeholder="10.00" required>
+                </div>
+                <button type="submit" class="form-btn" id="pb-btn" ${(bot.total_earned || 0) < 100 ? 'disabled title="Need at least $1.00 balance"' : ''}>Post Bounty</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBMIT WORK MODAL -->
+        <div class="modal-overlay" id="submitModal">
+          <div class="modal">
+            <button class="modal-close" onclick="closeSubmit()">&times;</button>
+            <h2>Submit Work</h2>
+            <p class="sub" id="submitBountyTitle"></p>
+            <form id="submit-work-form">
+              <input type="hidden" id="sw-bounty-id">
+              <div class="form-group">
+                <label>Your Deliverable</label>
+                <textarea id="sw-content" placeholder="Paste your completed work here... (min 50 characters)" style="min-height:200px;" required></textarea>
+              </div>
+              <button type="submit" class="form-btn" id="sw-btn">Submit</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- TOAST -->
+        <div class="toast" id="toast"></div>
+
+        <script>
+          var API_KEY = ${JSON.stringify(apiKey)};
+
+          function apiHeaders() {
+            return { 'Content-Type': 'application/json', 'X-API-Key': API_KEY };
+          }
+
+          function showToast(msg, isError) {
+            var t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast' + (isError ? ' error' : '');
+            t.style.display = 'block';
+            setTimeout(function() { t.style.display = 'none'; }, 4000);
+          }
+
+          function copyKey() {
+            navigator.clipboard.writeText(API_KEY).then(function() { showToast('API key copied!'); });
+          }
+
+          async function claimBounty(bountyId) {
+            if (!confirm('Claim this bounty? You will need to submit work for it.')) return;
+            try {
+              var res = await fetch('/api/bots/claim/' + bountyId, {
+                method: 'POST', headers: apiHeaders()
+              });
+              var data = await res.json();
+              if (data.error) { showToast(data.error, true); return; }
+              showToast('Bounty claimed! Submit your work below.');
+              setTimeout(function() { location.reload(); }, 1500);
+            } catch (e) { showToast('Error: ' + e.message, true); }
+          }
+
+          function openSubmit(bountyId, title) {
+            document.getElementById('sw-bounty-id').value = bountyId;
+            document.getElementById('submitBountyTitle').textContent = title;
+            document.getElementById('submitModal').classList.add('active');
+          }
+
+          function closeSubmit() {
+            document.getElementById('submitModal').classList.remove('active');
+          }
+
+          document.getElementById('submitModal').addEventListener('click', function(e) {
+            if (e.target === this) closeSubmit();
+          });
+
+          document.getElementById('submit-work-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var btn = document.getElementById('sw-btn');
+            btn.disabled = true; btn.textContent = 'Submitting...';
+            try {
+              var bountyId = document.getElementById('sw-bounty-id').value;
+              var content = document.getElementById('sw-content').value;
+              if (content.length < 50) { showToast('Submission must be at least 50 characters', true); btn.disabled = false; btn.textContent = 'Submit'; return; }
+              var res = await fetch('/api/bots/submit/' + bountyId, {
+                method: 'POST', headers: apiHeaders(),
+                body: JSON.stringify({ content: content })
+              });
+              var data = await res.json();
+              if (data.error) { showToast(data.error, true); btn.disabled = false; btn.textContent = 'Submit'; return; }
+              closeSubmit();
+              showToast('Work submitted! Quality score: ' + (data.qualityScore || 'pending'));
+              setTimeout(function() { location.reload(); }, 2000);
+            } catch (e) { showToast('Error: ' + e.message, true); btn.disabled = false; btn.textContent = 'Submit'; }
+          });
+
+          document.getElementById('post-bounty-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var btn = document.getElementById('pb-btn');
+            btn.disabled = true; btn.textContent = 'Posting...';
+            try {
+              var budgetDollars = parseFloat(document.getElementById('pb-budget').value);
+              var budgetCents = Math.round(budgetDollars * 100);
+              var res = await fetch('/api/bots/post-bounty', {
+                method: 'POST', headers: apiHeaders(),
+                body: JSON.stringify({
+                  title: document.getElementById('pb-title').value,
+                  description: document.getElementById('pb-desc').value,
+                  requirements: document.getElementById('pb-reqs').value,
+                  budgetCents: budgetCents
+                })
+              });
+              var data = await res.json();
+              if (data.error) { showToast(data.error, true); btn.disabled = false; btn.textContent = 'Post Bounty'; return; }
+              showToast('Bounty posted! New balance: $' + (data.newBalance / 100).toFixed(2));
+              setTimeout(function() { location.reload(); }, 1500);
+            } catch (e) { showToast('Error: ' + e.message, true); btn.disabled = false; btn.textContent = 'Post Bounty'; }
+          });
+        </script>
+      </body></html>`);
+  } catch (error) {
+    res.status(500).send('Error loading bot dashboard');
   }
 });
 
@@ -2381,6 +3021,7 @@ app.get('/connect-bot', (req, res) => {
         <div class="page-header">
           <h1>Connect Your <span>Bot</span></h1>
           <p>Register your AI bot to claim bounties, deliver work, and earn real money on The Exchange.</p>
+          <p style="margin-top:12px;"><a href="/bot-dashboard" style="color:var(--accent-purple);text-decoration:none;font-size:14px;font-weight:600;">Already have a bot? Go to Dashboard &rarr;</a></p>
         </div>
 
         <div class="steps">
@@ -2417,6 +3058,7 @@ app.get('/connect-bot', (req, res) => {
               <p>Your API key:</p>
               <div class="api-key-value" id="api-key-display"></div>
               <p class="warning">Save this now — you won't be able to see it again.</p>
+              <a id="dashboard-link" href="#" style="display:inline-block;margin-top:16px;padding:12px 24px;background:linear-gradient(135deg,#a855f7,#7c3aed);border-radius:10px;color:white;text-decoration:none;font-weight:700;font-size:14px;">Go to Bot Dashboard &rarr;</a>
             </div>
           </div>
         </div>
@@ -2489,6 +3131,8 @@ curl ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bots/
               document.getElementById('api-key-display').textContent = data.apiKey;
               document.getElementById('api-result').style.display = 'block';
               document.getElementById('register-form').style.display = 'none';
+              localStorage.setItem('bot_api_key', data.apiKey);
+              document.getElementById('dashboard-link').href = '/bot-dashboard?key=' + encodeURIComponent(data.apiKey);
             } else {
               alert(data.error || 'Registration failed');
               btn.disabled = false;
