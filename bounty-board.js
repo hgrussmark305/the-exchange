@@ -47,14 +47,12 @@ class BountyBoard {
       )
     `);
 
-    // Add new columns (safe — ALTER TABLE IF NOT EXISTS equivalent via try/catch)
-    const newCols = [
-      'poster_email TEXT',
-      'stripe_session_id TEXT',
-      'stripe_payment_intent TEXT'
-    ];
+    // Add new columns (safe — ignore errors if columns already exist)
+    const newCols = ['poster_email TEXT', 'stripe_session_id TEXT', 'stripe_payment_intent TEXT'];
     for (const col of newCols) {
-      try { this.db.db.run(`ALTER TABLE bounties ADD COLUMN ${col}`); } catch (e) { /* already exists */ }
+      this.db.db.run(`ALTER TABLE bounties ADD COLUMN ${col}`, (err) => {
+        // Ignore "duplicate column" errors — column already exists
+      });
     }
 
     console.log('\n📋 BOUNTY BOARD initialized');
