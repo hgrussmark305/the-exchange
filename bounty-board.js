@@ -48,6 +48,38 @@ class BountyBoard {
     `);
 
     console.log('\n📋 BOUNTY BOARD initialized');
+
+    // Recovery: retry any bounties stuck in 'claimed' status (failed mid-pipeline)
+    this.recoverStuckBounties();
+  }
+
+  async recoverStuckBounties() {
+    try {
+      const stuckBounties = await this.db.query(
+        "SELECT * FROM bounties WHERE status = 'claimed' AND claimed_by_bot IS NOT NULL"
+      );
+      if (!stuckBounties.length) return;
+
+      console.log(`\n🔄 Recovering ${stuckBounties.length} stuck bounties...`);
+
+      for (let i = 0; i < stuckBounties.length; i++) {
+        const bounty = stuckBounties[i];
+        const delayMs = i * 90000; // 90s apart to avoid rate limits
+        setTimeout(() => {
+          console.log(`   🔄 Retrying: "${bounty.title}"`);
+          this.autoFulfill(bounty.id, bounty.claimed_by_bot).catch(err => {
+            console.error(`   ❌ Recovery failed for "${bounty.title}": ${err.message}`);
+            // Re-open so it can be matched again
+            this.db.query(
+              "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
+              [bounty.id]
+            ).catch(() => {});
+          });
+        }, delayMs);
+      }
+    } catch (err) {
+      console.error('Recovery scan error:', err.message);
+    }
   }
 
   // ============================================================================
@@ -133,8 +165,19 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
 
     console.log(`   🤖 Matched to ${result.botId}: ${result.reason}`);
 
-    // Auto-fulfill
-    this.autoFulfill(bountyId, result.botId).catch(err => console.error('Auto-fulfill error:', err.message));
+    // Auto-fulfill — if it fails, re-open the bounty so it doesn't stay stuck as 'claimed'
+    this.autoFulfill(bountyId, result.botId).catch(async (err) => {
+      console.error(`   ❌ Auto-fulfill failed: ${err.message}`);
+      try {
+        await this.db.query(
+          "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
+          [bountyId]
+        );
+        console.log(`   🔄 Bounty "${bounty.title}" re-opened for retry`);
+      } catch (e) {
+        console.error('   Failed to re-open bounty:', e.message);
+      }
+    });
 
     return result;
   }
@@ -201,6 +244,9 @@ Begin:`
 
     console.log(`   ✅ Work submitted (${deliverable.length} chars, stop: ${stopReason})`);
 
+    // Brief pause before quality check to avoid back-to-back API calls
+    await new Promise(r => setTimeout(r, 5000));
+
     // Auto quality check
     await this.qualityCheck(bountyId, submissionId);
 
@@ -218,12 +264,15 @@ Begin:`
     const bounty = bounties[0];
     const submission = submissions[0];
 
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: `You are a quality assurance reviewer for The Exchange bounty platform.
+    let response;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await this.client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          messages: [{
+            role: 'user',
+            content: `You are a quality assurance reviewer for The Exchange bounty platform.
 
 BOUNTY REQUIREMENTS:
 Title: ${bounty.title}
@@ -242,8 +291,18 @@ Rate this submission. Respond with ONLY a JSON object:
 }
 
 Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 contract. Judge on: completeness (all sections present), relevance to requirements, and basic professionalism. Minor imperfections are acceptable.`
-      }]
-    });
+          }]
+        });
+        break;
+      } catch (err) {
+        if (err.status === 429 && attempt < 2) {
+          console.log(`   ⏳ Quality check rate limited, waiting 60s (attempt ${attempt + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 60000));
+        } else {
+          throw err;
+        }
+      }
+    }
 
     const text = response.content[0].text;
     const match = text.match(/\{[\s\S]*\}/);
