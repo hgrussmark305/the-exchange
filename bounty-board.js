@@ -67,7 +67,7 @@ class BountyBoard {
     `);
 
     // Add new columns (safe — ignore errors if columns already exist)
-    const newCols = ['poster_email TEXT', 'stripe_session_id TEXT', 'stripe_payment_intent TEXT'];
+    const newCols = ['poster_email TEXT', 'stripe_session_id TEXT', 'stripe_payment_intent TEXT', 'revision_count INTEGER DEFAULT 0', 'revision_reason TEXT'];
     for (const col of newCols) {
       this.db.db.run(`ALTER TABLE bounties ADD COLUMN ${col}`, (err) => {
         // Ignore "duplicate column" errors — column already exists
@@ -318,7 +318,11 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
     if (!bots.length) return;
     const bot = bots[0];
 
-    console.log(`\n⚡ Bot "${bot.name}" working on: "${bounty.title}"`);
+    console.log(`\n⚡ Bot "${bot.name}" working on: "${bounty.title}"${bounty.revision_count ? ' (REVISION #' + bounty.revision_count + ')' : ''}`);
+
+    const revisionContext = bounty.revision_reason
+      ? `\n\nIMPORTANT — REVISION REQUEST:\nThe client was not satisfied with the previous submission. Their feedback:\n"${bounty.revision_reason}"\nAddress this feedback directly in your revised work.\n`
+      : '';
 
     // Try fulfillment — if truncated, retry with a shorter prompt
     let response = await this._callWithRetry({
@@ -331,7 +335,7 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
 
 TASK: ${bounty.title}
 DETAILS: ${bounty.description}
-REQUIREMENTS: ${bounty.requirements}
+REQUIREMENTS: ${bounty.requirements}${revisionContext}
 
 RULES:
 1. Keep output under 1500 words. Be direct and concise.
@@ -512,7 +516,100 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
 
     console.log(`   💰 Paid: Bot gets $${(botPayout / 100).toFixed(2)}, Platform fee $${(platformFee / 100).toFixed(2)}`);
 
+    // Notify bounty poster
+    await this.notifyPoster(bounty);
+
     return { botPayout, platformFee };
+  }
+
+  // ============================================================================
+  // NOTIFICATIONS
+  // ============================================================================
+  async notifyPoster(bounty) {
+    const email = bounty.poster_email;
+    if (!email) return;
+
+    // Get best submission for quality score
+    const submissions = await this.db.query(
+      'SELECT * FROM bounty_submissions WHERE bounty_id = ? ORDER BY quality_score DESC LIMIT 1',
+      [bounty.id]
+    );
+    const bestSubmission = submissions[0];
+    const qualityScore = bestSubmission?.quality_score || 'N/A';
+
+    // Store notification in DB
+    this.db.db.run(`CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bounty_id TEXT,
+      email TEXT,
+      type TEXT,
+      subject TEXT,
+      body TEXT,
+      sent_at INTEGER,
+      status TEXT DEFAULT 'logged'
+    )`, () => {});
+
+    const subject = `Your bounty is complete: "${bounty.title}"`;
+    const body = [
+      `Your bounty "${bounty.title}" has been completed!`,
+      ``,
+      `Quality Score: ${qualityScore}/10`,
+      `Budget: $${(bounty.budget_cents / 100).toFixed(2)}`,
+      `Completed by: ${bounty.claimed_by_bot}`,
+      ``,
+      `View your deliverable: https://the-exchange-production-14b3.up.railway.app/bounties/${bounty.id}`,
+      ``,
+      `Not satisfied? You can request one free revision from the bounty detail page.`
+    ].join('\n');
+
+    this.db.db.run(
+      'INSERT INTO notifications (bounty_id, email, type, subject, body, sent_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [bounty.id, email, 'bounty_completed', subject, body, Date.now()],
+      () => {}
+    );
+
+    console.log(`   📧 Notification logged for ${email}: "${bounty.title}" (score: ${qualityScore}/10)`);
+  }
+
+  // ============================================================================
+  // REVISION SYSTEM
+  // ============================================================================
+  async requestRevision(bountyId, reason) {
+    const bounties = await this.db.query('SELECT * FROM bounties WHERE id = ?', [bountyId]);
+    if (!bounties.length) throw new Error('Bounty not found');
+    const bounty = bounties[0];
+
+    // Only completed/paid bounties can be revised
+    if (bounty.status !== 'completed' && bounty.status !== 'paid') {
+      throw new Error(`Cannot request revision for bounty with status "${bounty.status}"`);
+    }
+
+    // Check revision count — max 1 free revision
+    const revisionCount = bounty.revision_count || 0;
+    if (revisionCount >= 1) {
+      throw new Error('Maximum 1 free revision per bounty. Contact support for a refund.');
+    }
+
+    const originalBot = bounty.claimed_by_bot;
+
+    // Re-open the bounty for the same bot to retry
+    await this.db.query(`
+      UPDATE bounties SET status = 'claimed', revision_count = ?, revision_reason = ?, completed_at = NULL, quality_score = NULL, paid_at = NULL WHERE id = ?
+    `, [revisionCount + 1, reason, bountyId]);
+
+    console.log(`🔄 Revision requested for "${bounty.title}" — bot ${originalBot} will redo the work`);
+    console.log(`   Reason: ${reason}`);
+
+    // Auto-fulfill the revision with the revision feedback
+    setTimeout(async () => {
+      try {
+        await this.autoFulfill(bountyId);
+      } catch (err) {
+        console.error(`   Revision fulfillment error: ${err.message}`);
+      }
+    }, 5000);
+
+    return { bountyId, revisionCount: revisionCount + 1, bot: originalBot };
   }
 
   // ============================================================================

@@ -1447,6 +1447,29 @@ app.get('/api/bounties/:bountyId', async (req, res) => {
   }
 });
 
+// Request revision on a completed bounty
+app.post('/api/bounties/:bountyId/revision', async (req, res) => {
+  try {
+    const { reason, email } = req.body;
+    if (!reason || reason.trim().length < 10) {
+      return res.status(400).json({ error: 'Please provide a revision reason (at least 10 characters)' });
+    }
+
+    const bounty = await bountyBoard.getBounty(req.params.bountyId);
+    if (!bounty) return res.status(404).json({ error: 'Bounty not found' });
+
+    // Verify email matches the poster (if bounty has poster_email)
+    if (bounty.poster_email && email && email !== bounty.poster_email) {
+      return res.status(403).json({ error: 'Email does not match the bounty poster' });
+    }
+
+    const result = await bountyBoard.requestRevision(req.params.bountyId, reason.trim());
+    res.json({ success: true, message: 'Revision requested. The bot will redo the work shortly.', ...result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Process next open bounty (one at a time to avoid rate limits)
 app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
   try {
@@ -1557,6 +1580,16 @@ app.get('/api/bots/leaderboard', async (req, res) => {
     res.json({ leaderboard });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Get pending notifications (admin)
+app.get('/api/admin/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await db.query('SELECT * FROM notifications ORDER BY sent_at DESC LIMIT 50');
+    res.json({ notifications });
+  } catch (error) {
+    res.json({ notifications: [] });
   }
 });
 
@@ -1939,7 +1972,18 @@ app.get('/post-bounty', (req, res) => {
       .step-card h3 { font-size:14px; margin-bottom:4px; }
       .step-card p { font-size:12px; color:var(--text-secondary); line-height:1.5; }
 
-      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } }
+      .templates { margin-bottom:32px; }
+      .templates h2 { font-size:18px; font-weight:700; margin-bottom:12px; }
+      .templates p { font-size:13px; color:var(--text-secondary); margin-bottom:16px; }
+      .template-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+      .template-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:16px; cursor:pointer; transition:all 0.2s; }
+      .template-card:hover { border-color:var(--accent-purple); transform:translateY(-2px); }
+      .template-card.selected { border-color:var(--accent-purple); background:#a855f710; }
+      .template-card .tmpl-icon { font-size:24px; margin-bottom:8px; }
+      .template-card h3 { font-size:14px; font-weight:600; margin-bottom:4px; }
+      .template-card p { font-size:12px; color:var(--text-secondary); line-height:1.4; margin:0; }
+
+      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
     </style></head>
     <body>
       <nav class="nav">
@@ -1958,6 +2002,38 @@ app.get('/post-bounty', (req, res) => {
         </div>
 
         ${cancelled ? '<div class="alert alert-warning">Payment was cancelled. Your bounty has not been posted. You can try again below.</div>' : ''}
+
+        <div class="templates">
+          <h2>Start from a template</h2>
+          <p>Click a template to auto-fill the form, then customize as needed.</p>
+          <div class="template-grid">
+            <div class="template-card" onclick="useTemplate('blog')">
+              <div class="tmpl-icon">&#9997;</div>
+              <h3>Blog Post</h3>
+              <p>SEO-optimized article on any topic</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('product')">
+              <div class="tmpl-icon">&#128722;</div>
+              <h3>Product Descriptions</h3>
+              <p>Conversion-focused copy for e-commerce</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('email')">
+              <div class="tmpl-icon">&#128231;</div>
+              <h3>Cold Outreach Emails</h3>
+              <p>Sales email templates that convert</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('landing')">
+              <div class="tmpl-icon">&#127760;</div>
+              <h3>Landing Page Copy</h3>
+              <p>Headlines, benefits, CTAs for your page</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('research')">
+              <div class="tmpl-icon">&#128200;</div>
+              <h3>Research Report</h3>
+              <p>Market analysis or competitive research</p>
+            </div>
+          </div>
+        </div>
 
         <div class="form-card">
           <form id="bounty-form">
@@ -2049,6 +2125,59 @@ app.get('/post-bounty', (req, res) => {
           breakdownEl.textContent = '$' + budget.toFixed(2) + ' bounty + $' + fee.toFixed(2) + ' fee';
         }
         budgetEl.addEventListener('input', updateTotal);
+
+        const TEMPLATES = {
+          blog: {
+            title: 'Write a blog post about [YOUR TOPIC]',
+            description: 'Write a compelling, SEO-optimized 800-word blog post. Include an engaging introduction, 3-5 subheadings with detailed sections, real-world examples, and a strong conclusion with a call to action.',
+            requirements: '800+ words, SEO-optimized, professional tone, include at least 3 real examples, use H2/H3 subheadings',
+            category: 'content',
+            budget: 10
+          },
+          product: {
+            title: 'Write product descriptions for [YOUR PRODUCTS]',
+            description: 'Write compelling product descriptions for 3 products. Each needs a catchy title, tagline, 3 bullet points highlighting key benefits, and a full 100-word description. Copy should be conversion-focused and ready to paste into your store.',
+            requirements: '3 complete product descriptions, conversion-focused, include pricing hooks, ready for Gumroad/Shopify',
+            category: 'content',
+            budget: 10
+          },
+          email: {
+            title: 'Write 5 cold outreach email templates for [YOUR BUSINESS]',
+            description: 'Create 5 different cold email templates for B2B outreach. Each email should take a different angle: pain point, case study, ROI, urgency, and value-first. Include subject lines and personalization tokens.',
+            requirements: '5 complete emails, subject lines included, under 150 words each, personalization tokens like {{first_name}}',
+            category: 'marketing',
+            budget: 10
+          },
+          landing: {
+            title: 'Write landing page copy for [YOUR PRODUCT/SERVICE]',
+            description: 'Write complete landing page copy including: hero headline + subheadline, 3 benefit sections with icons, social proof section, FAQ section (5 questions), and a final CTA section. Copy should be conversion-optimized.',
+            requirements: 'Complete landing page copy, conversion-focused, professional but approachable tone, ready to paste into a website',
+            category: 'content',
+            budget: 15
+          },
+          research: {
+            title: 'Research report: [YOUR TOPIC]',
+            description: 'Produce a detailed research brief covering the current state of the topic. Include market overview, key players, trends, data points, and actionable recommendations. Structure with executive summary, findings, and conclusion.',
+            requirements: 'Well-structured report, cite realistic data points, include executive summary and actionable recommendations',
+            category: 'research',
+            budget: 10
+          }
+        };
+
+        function useTemplate(key) {
+          const t = TEMPLATES[key];
+          if (!t) return;
+          document.getElementById('title').value = t.title;
+          document.getElementById('description').value = t.description;
+          document.getElementById('requirements').value = t.requirements;
+          document.getElementById('category').value = t.category;
+          budgetEl.value = t.budget;
+          updateTotal();
+          document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+          event.currentTarget.classList.add('selected');
+          document.getElementById('title').focus();
+          document.getElementById('title').select();
+        }
 
         document.getElementById('bounty-form').addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -2461,6 +2590,23 @@ app.get('/bounties/:bountyId', async (req, res) => {
         </div>
       </div>` : '';
 
+    const revisionCount = bounty.revision_count || 0;
+    const canRevise = (bounty.status === 'completed' || bounty.status === 'paid') && revisionCount < 1;
+    const revisionHtml = canRevise ? `
+      <div class="detail-section revision-section">
+        <h2>Not satisfied?</h2>
+        <div class="revision-card">
+          <h3>Request a free revision</h3>
+          <p>Tell us what needs to change and the bot will redo the work. You get 1 free revision per bounty.</p>
+          <textarea id="revision-reason" placeholder="Describe what should be different. Be specific — e.g. 'Make the tone more casual' or 'Include more statistics'"></textarea>
+          <button class="revision-btn" id="revision-btn" onclick="requestRevision()">Request Revision</button>
+          <div id="revision-result"></div>
+        </div>
+      </div>` : revisionCount >= 1 ? `
+      <div class="detail-section revision-section">
+        <div class="revision-notice">Revision was already used for this bounty. Contact support for a refund if still not satisfied.</div>
+      </div>` : '';
+
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>${bounty.title} — The Exchange</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
@@ -2550,6 +2696,19 @@ app.get('/bounties/:bountyId', async (req, res) => {
         .payment-row { display:flex; justify-content:space-between; padding:8px 0; font-size:14px; color:var(--text-secondary); }
         .payment-row.total { border-top:1px solid var(--border); margin-top:8px; padding-top:16px; color:var(--accent-green); font-weight:700; font-family:var(--font-mono); font-size:16px; }
 
+        /* Revision */
+        .revision-section { margin-top:32px; }
+        .revision-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:24px; }
+        .revision-card h3 { font-size:15px; margin-bottom:8px; }
+        .revision-card p { font-size:13px; color:var(--text-secondary); margin-bottom:16px; line-height:1.5; }
+        .revision-card textarea { width:100%; padding:12px 16px; background:#0a0a0f; border:1px solid var(--border); border-radius:10px; color:var(--text-primary); font-family:var(--font-display); font-size:14px; min-height:100px; resize:vertical; outline:none; }
+        .revision-card textarea:focus { border-color:var(--accent-amber); }
+        .revision-btn { margin-top:12px; padding:12px 24px; background:linear-gradient(135deg, var(--accent-amber), #e6a030); border:none; border-radius:10px; color:#0a0a0f; font-family:var(--font-display); font-size:14px; font-weight:700; cursor:pointer; transition:all 0.2s; }
+        .revision-btn:hover { transform:translateY(-1px); box-shadow:0 8px 24px #ffb84d44; }
+        .revision-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+        .revision-notice { padding:14px 20px; border-radius:10px; font-size:14px; background:#ffb84d18; border:1px solid #ffb84d44; color:var(--accent-amber); }
+        .revision-success { padding:14px 20px; border-radius:10px; font-size:14px; background:#00f0a018; border:1px solid #00f0a044; color:var(--accent-green); }
+
         @media(max-width:600px) { .timeline { flex-wrap:wrap; gap:8px; } .step-line { display:none; } .bounty-title { font-size:22px; } }
       </style></head>
       <body>
@@ -2598,7 +2757,41 @@ app.get('/bounties/:bountyId', async (req, res) => {
           </div>` : ''}
 
           ${paymentHtml}
+
+          ${revisionHtml}
         </div>
+        ${canRevise ? `<script>
+          async function requestRevision() {
+            const reason = document.getElementById('revision-reason').value.trim();
+            if (reason.length < 10) {
+              alert('Please provide a more detailed revision reason (at least 10 characters).');
+              return;
+            }
+            const btn = document.getElementById('revision-btn');
+            btn.disabled = true;
+            btn.textContent = 'Requesting revision...';
+            try {
+              const res = await fetch('/api/bounties/${bounty.id}/revision', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+              });
+              const data = await res.json();
+              if (data.success) {
+                document.getElementById('revision-result').innerHTML = '<div class="revision-success" style="margin-top:12px;">Revision requested! The bot is redoing the work. Refresh this page in a few minutes to see the updated deliverable.</div>';
+                btn.style.display = 'none';
+              } else {
+                alert(data.error || 'Something went wrong');
+                btn.disabled = false;
+                btn.textContent = 'Request Revision';
+              }
+            } catch (err) {
+              alert('Error: ' + err.message);
+              btn.disabled = false;
+              btn.textContent = 'Request Revision';
+            }
+          }
+        </script>` : ''}
       </body></html>`);
   } catch (error) {
     res.status(500).send('Error loading bounty');
