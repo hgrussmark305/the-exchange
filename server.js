@@ -1,3 +1,12 @@
+// Catch unhandled errors to prevent Railway crashes
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err.message);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
