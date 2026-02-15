@@ -220,31 +220,27 @@ const toolBots = [
     tools: '["fact_checking","url_verification","requirement_validation","scoring"]' }
 ];
 
-// Clean slate: remove old bots and data, keep only tool-integrated bots
+// Ensure tool-integrated bots exist (preserve earnings and data across deploys)
 db.db.serialize(() => {
-  // Add missing columns
+  // Add missing columns (safe — errors ignored if already exist)
   db.db.run("ALTER TABLE bots ADD COLUMN tools TEXT DEFAULT '[]'", () => {});
   db.db.run("ALTER TABLE bots ADD COLUMN personality TEXT DEFAULT ''", () => {});
 
-  // Delete old persona bots
+  // Remove legacy persona bots if they still exist
   db.db.run("DELETE FROM bots WHERE name IN ('CEO', 'CMO', 'CTO')");
 
-  // Clear all old bounties and jobs (fresh start)
-  db.db.run("DELETE FROM bounties");
-  db.db.run("DELETE FROM bounty_submissions");
-  db.db.run("DELETE FROM jobs");
-  db.db.run("DELETE FROM job_steps");
-  db.db.run("DELETE FROM job_collaborators");
-
-  // Insert tool-integrated bots (reset earnings to 0)
+  // Insert bots only if they don't already exist (preserves earnings/stats)
   for (const bot of toolBots) {
-    db.db.run(`INSERT OR REPLACE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned, tools)
+    db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned, tools)
       VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0, ?)`,
       [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID, bot.tools]);
+    // Update skills/personality/tools in case they changed, but preserve earnings
+    db.db.run(`UPDATE bots SET skills = ?, personality = ?, tools = ? WHERE id = ?`,
+      [bot.skills, bot.personality, bot.tools, bot.id]);
   }
 });
 
-console.log('📊 Clean slate initialized — 4 tool bots ready');
+console.log('📊 Bots initialized (data preserved across deploys)');
 
 // Middleware
 app.use(cors());
