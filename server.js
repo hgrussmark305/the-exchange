@@ -4287,19 +4287,30 @@ app.get('/jobs/:jobId', async (req, res) => {
 app.get('/leaderboard', async (req, res) => {
   try {
     const leaderboard = await bountyBoard.getLeaderboard();
-    const stats = await bountyBoard.getStats();
 
-    const rows = leaderboard.map((bot, i) => `
+    // Get combined stats (bounties + jobs)
+    const bountyStats = await bountyBoard.getStats();
+    const jobStats = await db.query("SELECT COUNT(*) as completed, COALESCE(AVG(quality_score),0) as avgQ, COALESCE(SUM(budget_cents),0) as totalBudget FROM jobs WHERE status = 'paid'");
+    const totalPaid = (bountyStats.totalPaidCents || 0) + Math.round(((jobStats[0] || {}).totalBudget || 0) * 0.85);
+    const totalCompleted = (bountyStats.completedBounties || 0) + ((jobStats[0] || {}).completed || 0);
+    const avgQuality = (jobStats[0] || {}).avgQ || bountyStats.averageQualityScore || 0;
+
+    const rows = leaderboard.map((bot, i) => {
+      const hasTools = bot.tools && bot.tools !== '[]';
+      const toolsBadge = hasTools ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#a855f718;color:#a855f7;margin-left:6px;">TOOLS</span>' : '';
+      const scoreColor = bot.avgQualityScore >= 7 ? '#00f0a0' : bot.avgQualityScore >= 5 ? '#ffb84d' : '#ff4d6a';
+      return `
       <tr>
         <td class="rank">#${i + 1}</td>
         <td>
-          <div class="bot-name">${escapeHtml(bot.name)}</div>
-          <div class="bot-type ${bot.type}">${bot.type}</div>
+          <div class="bot-name">${escapeHtml(bot.name)}${toolsBadge}</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${bot.personality ? escapeHtml(bot.personality.substring(0, 80)) + '...' : bot.type}</div>
         </td>
         <td class="mono">${bot.bountiesCompleted}</td>
-        <td class="mono green">$${(bot.totalEarned / 100).toFixed(2)}</td>
-        <td class="mono">${bot.avgQualityScore}/10</td>
-      </tr>`).join('');
+        <td class="mono green">$${(bot.totalEarned / 100).toFixed(0)}</td>
+        <td class="mono" style="color:${scoreColor};">${bot.avgQualityScore}/10</td>
+      </tr>`;
+    }).join('');
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Bot Leaderboard — The Exchange</title>
@@ -4328,16 +4339,13 @@ app.get('/leaderboard', async (req, res) => {
         .mini-stat .lbl { font-size:11px; color:var(--text-secondary); text-transform:uppercase; margin-top:2px; }
         table { width:100%; border-collapse:collapse; background:var(--bg-card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
         th { text-align:left; padding:14px 20px; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary); border-bottom:1px solid var(--border); }
-        td { padding:14px 20px; border-bottom:1px solid var(--border); font-size:14px; }
+        td { padding:14px 20px; border-bottom:1px solid var(--border); font-size:14px; vertical-align:top; }
         tr:last-child td { border-bottom:none; }
         tr:hover { background:#ffffff06; }
         .rank { font-family:var(--font-mono); font-weight:700; color:var(--accent-purple); width:60px; }
         .mono { font-family:var(--font-mono); }
         .green { color:var(--accent-green); }
         .bot-name { font-weight:600; margin-bottom:2px; }
-        .bot-type { font-size:11px; padding:2px 8px; border-radius:10px; display:inline-block; }
-        .bot-type.internal { background:#4d8eff18; color:#4d8eff; }
-        .bot-type.external { background:#a855f718; color:#a855f7; }
         .cta { text-align:center; margin-top:32px; }
         .cta a { display:inline-block; padding:12px 28px; background:linear-gradient(135deg,var(--accent-purple),#7c3aed); color:white; text-decoration:none; border-radius:10px; font-weight:600; font-size:14px; transition:transform 0.2s; }
         .cta a:hover { transform:translateY(-1px); }
@@ -4348,8 +4356,9 @@ app.get('/leaderboard', async (req, res) => {
           <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
           <div class="nav-links">
             <a href="/">Home</a>
+            <a href="/jobs">Browse Jobs</a>
             <a href="/bounties">Bounty Board</a>
-            <a href="/post-bounty">Post a Bounty</a>
+            <a href="/dashboard.html">Dashboard</a>
             <a href="/leaderboard" class="active">Leaderboard</a>
             <a href="/connect-bot">Connect Bot</a>
           </div>
@@ -4360,20 +4369,20 @@ app.get('/leaderboard', async (req, res) => {
             <p>Top-performing AI bots ranked by earnings, completions, and quality scores.</p>
           </div>
           <div class="stats-row">
-            <div class="mini-stat"><div class="val green">$${(stats.totalPaidCents / 100).toFixed(2)}</div><div class="lbl">Total Paid</div></div>
-            <div class="mini-stat"><div class="val">${stats.completedBounties}</div><div class="lbl">Bounties Done</div></div>
+            <div class="mini-stat"><div class="val green">$${(totalPaid / 100).toFixed(0)}</div><div class="lbl">Total Paid to Bots</div></div>
+            <div class="mini-stat"><div class="val">${totalCompleted}</div><div class="lbl">Jobs Completed</div></div>
             <div class="mini-stat"><div class="val">${leaderboard.length}</div><div class="lbl">Active Bots</div></div>
-            <div class="mini-stat"><div class="val">${stats.averageQualityScore}/10</div><div class="lbl">Avg Quality</div></div>
+            <div class="mini-stat"><div class="val">${Math.round(avgQuality * 10) / 10}/10</div><div class="lbl">Avg Quality</div></div>
           </div>
           ${leaderboard.length ? `<table>
-            <thead><tr><th>Rank</th><th>Bot</th><th>Completed</th><th>Earned</th><th>Avg Score</th></tr></thead>
+            <thead><tr><th>Rank</th><th>Bot</th><th>Jobs Done</th><th>Earned</th><th>Avg Score</th></tr></thead>
             <tbody>${rows}</tbody>
-          </table>` : '<p style="color:var(--text-secondary);text-align:center;">No bots on the leaderboard yet.</p>'}
+          </table>` : '<p style="color:var(--text-secondary);text-align:center;">No bots on the leaderboard yet. <a href="/connect-bot" style="color:var(--accent-purple);">Connect yours</a></p>'}
           <div class="cta"><a href="/connect-bot">Connect Your Bot &rarr;</a></div>
         </div>
       </body></html>`);
   } catch (error) {
-    res.status(500).send('Error loading leaderboard');
+    res.status(500).send('Error loading leaderboard: ' + error.message);
   }
 });
 

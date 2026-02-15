@@ -755,30 +755,49 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
   }
 
   async getLeaderboard() {
-    // Combine internal and external bots
+    // Combine internal and external bots — include job data
     const internal = await this.db.query(
-      "SELECT id, name, 'internal' as type, total_earned, skills FROM bots WHERE total_earned > 0 ORDER BY total_earned DESC"
+      "SELECT id, name, 'internal' as type, total_earned, skills, tools, personality FROM bots WHERE total_earned > 0 ORDER BY total_earned DESC"
     );
     const external = await this.db.query(
       "SELECT id, name, 'external' as type, total_earned, skills, bounties_completed, bounties_failed, avg_quality_score FROM external_bots WHERE total_earned > 0 ORDER BY total_earned DESC"
     );
 
-    // Get bounty stats for internal bots too
+    // Get combined bounty + job stats for internal bots
     const allBots = await Promise.all([
       ...internal.map(async (bot) => {
-        const completed = await this.db.query("SELECT COUNT(*) as c FROM bounties WHERE claimed_by_bot = ? AND status = 'paid'", [bot.id]);
-        const avgScore = await this.db.query("SELECT COALESCE(AVG(quality_score), 0) as avg FROM bounties WHERE claimed_by_bot = ? AND quality_score IS NOT NULL", [bot.id]);
+        // Bounty stats
+        const bountyCompleted = await this.db.query("SELECT COUNT(*) as c FROM bounties WHERE claimed_by_bot = ? AND status = 'paid'", [bot.id]);
+        const bountyAvg = await this.db.query("SELECT COALESCE(AVG(quality_score), 0) as avg FROM bounties WHERE claimed_by_bot = ? AND quality_score IS NOT NULL", [bot.id]);
+
+        // Job stats — count jobs where this bot was a collaborator
+        const jobCompleted = await this.db.query("SELECT COUNT(DISTINCT jc.job_id) as c FROM job_collaborators jc JOIN jobs j ON jc.job_id = j.id WHERE jc.bot_id = ? AND j.status = 'paid'", [bot.id]);
+        const jobAvg = await this.db.query("SELECT COALESCE(AVG(j.quality_score), 0) as avg FROM job_collaborators jc JOIN jobs j ON jc.job_id = j.id WHERE jc.bot_id = ? AND j.quality_score IS NOT NULL", [bot.id]);
+        const jobEarned = await this.db.query("SELECT COALESCE(SUM(jc.earned_cents), 0) as total FROM job_collaborators jc WHERE jc.bot_id = ?", [bot.id]);
+
+        const totalCompleted = (bountyCompleted[0].c || 0) + (jobCompleted[0].c || 0);
+        const combinedScores = [];
+        if (bountyAvg[0].avg > 0) combinedScores.push(bountyAvg[0].avg);
+        if (jobAvg[0].avg > 0) combinedScores.push(jobAvg[0].avg);
+        const avgScore = combinedScores.length > 0
+          ? combinedScores.reduce((a, b) => a + b, 0) / combinedScores.length
+          : 0;
+
         return {
           id: bot.id, name: bot.name, type: 'internal', skills: bot.skills,
+          tools: bot.tools, personality: bot.personality,
           totalEarned: bot.total_earned || 0,
-          bountiesCompleted: completed[0].c,
-          avgQualityScore: Math.round((avgScore[0].avg || 0) * 10) / 10
+          bountiesCompleted: totalCompleted,
+          jobsCompleted: jobCompleted[0].c || 0,
+          jobEarnings: jobEarned[0].total || 0,
+          avgQualityScore: Math.round(avgScore * 10) / 10
         };
       }),
       ...external.map(bot => ({
         id: bot.id, name: bot.name, type: 'external', skills: bot.skills,
         totalEarned: bot.total_earned || 0,
         bountiesCompleted: bot.bounties_completed || 0,
+        jobsCompleted: 0,
         avgQualityScore: bot.avg_quality_score || 0
       }))
     ]);

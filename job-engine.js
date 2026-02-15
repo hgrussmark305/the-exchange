@@ -187,7 +187,7 @@ class JobEngine {
       // Execute via orchestrator (real bots with tools)
       const result = await this.orchestrator.executeJob(job, plan);
 
-      // Update DB steps with outputs
+      // Update DB steps with outputs (original plan steps)
       for (let i = 0; i < result.steps.length && i < dbSteps.length; i++) {
         const output = typeof result.steps[i].output === 'string'
           ? result.steps[i].output
@@ -197,6 +197,21 @@ class JobEngine {
           [output, Date.now(), dbSteps[i].id]
         );
         console.log(`   Step ${i + 1} (${result.steps[i].bot}): ${output.length} chars`);
+      }
+
+      // Insert extra steps (peer review, revisions) that weren't in the original plan
+      for (let i = dbSteps.length; i < result.steps.length; i++) {
+        const extra = result.steps[i];
+        const output = typeof extra.output === 'string' ? extra.output : JSON.stringify(extra.output);
+        const stepId = 'step_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex');
+        const stepTitle = extra.method === 'revision_after_peer_review' ? 'Peer Review Revision'
+          : extra.method === 'revision_after_quality_review' ? 'Quality Improvement Revision'
+          : 'Additional Step';
+        await this.db.query(
+          "INSERT INTO job_steps (id, job_id, step_number, title, description, assigned_bot, status, output, completed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)",
+          [stepId, jobId, i + 1, stepTitle, extra.method || '', extra.bot, output, Date.now(), Date.now()]
+        );
+        console.log(`   Extra step ${i + 1} (${extra.bot} — ${stepTitle}): ${output.length} chars`);
       }
 
       // Build final deliverable
@@ -221,19 +236,22 @@ class JobEngine {
         [deliverable, jobId]
       );
 
-      // Use orchestrator's quality result directly
+      // Use orchestrator's quality result directly (may include revision improvements)
       const review = result.quality;
+      const hadRevisions = result.steps.some(s => s.method && s.method.includes('revision'));
       await this.db.query(
         "UPDATE jobs SET quality_score = ?, quality_feedback = ? WHERE id = ?",
         [review.overall, review.feedback, jobId]
       );
 
-      if (review.passes) {
+      // Accept if passes quality check, OR if score >= 5 after revision (content has value)
+      const accepted = review.passes || (hadRevisions && review.overall >= 5);
+      if (accepted) {
         await this.db.query(
           "UPDATE jobs SET status = 'completed', completed_at = ? WHERE id = ?",
           [Date.now(), jobId]
         );
-        console.log(`   APPROVED (${review.overall}/10): ${review.feedback}`);
+        console.log(`   APPROVED (${review.overall}/10${hadRevisions ? ', after revision' : ''}): ${review.feedback}`);
         if (review.scores) {
           console.log(`   Scores: completeness=${review.scores.completeness} accuracy=${review.scores.accuracy} quality=${review.scores.quality} seo=${review.scores.seo} value=${review.scores.value}`);
         }

@@ -582,7 +582,89 @@ RULES:
       await new Promise(r => setTimeout(r, 2000));
     }
 
-    // Quality review (always runs)
+    // ── PEER REVIEW: SEOBot reviews content before QualityBot ──
+    let peerFeedback = null;
+    if (typeof previousOutput === 'string' && previousOutput.length > 200) {
+      try {
+        console.log(`   Peer review: SEOBot reviewing content...`);
+        const peerReview = await this.seo.client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          messages: [{
+            role: 'user',
+            content: `You are SEOBot, performing a peer review of content before final quality check.
+
+JOB: ${job.title}
+REQUIREMENTS: ${job.requirements || 'None specified'}
+
+CONTENT TO REVIEW:
+${previousOutput.substring(0, 4000)}
+
+Review for these issues:
+1. Missing sections or requirements not addressed
+2. Weak SEO (missing keywords, bad heading structure, no meta description)
+3. Content that could be stronger (vague claims, missing specifics)
+4. Formatting issues
+
+Respond with JSON:
+{
+  "issues": ["specific issue 1", "specific issue 2"],
+  "suggestions": ["specific improvement 1", "specific improvement 2"],
+  "needsRevision": true/false,
+  "summary": "1-2 sentence peer review"
+}`
+          }]
+        });
+        const peerText = peerReview.content[0].text;
+        const peerMatch = peerText.match(/\{[\s\S]*\}/);
+        if (peerMatch) {
+          peerFeedback = JSON.parse(peerMatch[0]);
+          console.log(`   Peer review: ${peerFeedback.summary || 'Done'}`);
+        }
+      } catch (e) {
+        console.error(`   Peer review failed: ${e.message}`);
+      }
+    }
+
+    // ── REVISION LOOP: If peer review flagged issues, revise before quality check ──
+    if (peerFeedback && peerFeedback.needsRevision && peerFeedback.issues && peerFeedback.issues.length > 0) {
+      try {
+        console.log(`   Revision: WriterBot revising based on peer feedback...`);
+        const revisionResult = await this.writer.client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 8192,
+          messages: [{
+            role: 'user',
+            content: `You are WriterBot. Your content was peer-reviewed and needs improvement.
+
+ORIGINAL JOB: ${job.title}
+REQUIREMENTS: ${job.requirements || 'None specified'}
+
+YOUR CURRENT CONTENT:
+${previousOutput.substring(0, 5000)}
+
+PEER REVIEW FEEDBACK:
+Issues found: ${peerFeedback.issues.join('; ')}
+Suggestions: ${(peerFeedback.suggestions || []).join('; ')}
+
+REVISE the content to fix ALL the issues above. Keep everything that was good, fix what was flagged. Output the COMPLETE revised content (not just the changes).`
+          }]
+        });
+        previousOutput = revisionResult.content[0].text;
+        stepOutputs.push({
+          step: stepOutputs.length + 1,
+          bot: 'writer-bot',
+          method: 'revision_after_peer_review',
+          output: previousOutput
+        });
+        console.log(`   Revision complete (${previousOutput.length} chars)`);
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (e) {
+        console.error(`   Revision failed: ${e.message}`);
+      }
+    }
+
+    // ── QUALITY REVIEW (always runs) ──
     const stepSummary = stepOutputs.map(s =>
       `Step ${s.step} (${s.bot}): ${typeof s.output === 'string' ? s.output.substring(0, 500) : JSON.stringify(s.output).substring(0, 500)}`
     ).join('\n\n');
@@ -599,6 +681,67 @@ RULES:
       parsedQuality = JSON.parse(qMatch[0]);
     } catch (e) {
       parsedQuality = { overall: 7, passes: true, feedback: 'Auto-approved', scores: {} };
+    }
+
+    // ── SECOND REVISION: If quality score < 7, revise once more with quality feedback ──
+    if (parsedQuality.overall && parsedQuality.overall < 7 && !parsedQuality.passes) {
+      try {
+        console.log(`   Quality revision: Score ${parsedQuality.overall}/10 — WriterBot revising with quality feedback...`);
+        const qRevision = await this.writer.client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 8192,
+          messages: [{
+            role: 'user',
+            content: `You are WriterBot. Your deliverable was reviewed and scored ${parsedQuality.overall}/10. You need 7+ to pass.
+
+ORIGINAL JOB: ${job.title}
+REQUIREMENTS: ${job.requirements || 'None specified'}
+
+YOUR CURRENT CONTENT:
+${previousOutput.substring(0, 5000)}
+
+QUALITY REVIEWER FEEDBACK:
+Score: ${parsedQuality.overall}/10
+Feedback: ${parsedQuality.feedback}
+Issues: ${(parsedQuality.issues || []).join('; ')}
+${parsedQuality.scores ? 'Dimension scores: completeness=' + parsedQuality.scores.completeness + ' accuracy=' + parsedQuality.scores.accuracy + ' quality=' + parsedQuality.scores.quality + ' seo=' + parsedQuality.scores.seo + ' value=' + parsedQuality.scores.value : ''}
+
+REVISE to address every issue. Focus on:
+- Completeness: cover ALL requirements
+- Missing sections: add anything that was left out
+- Specificity: replace vague claims with concrete details
+- Structure: proper headings, formatting, meta descriptions
+
+Output the COMPLETE revised content.`
+          }]
+        });
+        previousOutput = qRevision.content[0].text;
+        stepOutputs.push({
+          step: stepOutputs.length + 1,
+          bot: 'writer-bot',
+          method: 'revision_after_quality_review',
+          output: previousOutput
+        });
+        console.log(`   Quality revision complete — re-scoring...`);
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Re-score the revised content
+        const reScoreResult = await this.quality.reviewDeliverable(
+          job,
+          previousOutput,
+          stepSummary + `\n\nRevision step (writer-bot): ${previousOutput.substring(0, 500)}`
+        );
+        try {
+          const reMatch = reScoreResult.match(/\{[\s\S]*\}/);
+          const reScore = JSON.parse(reMatch[0]);
+          console.log(`   Re-scored: ${reScore.overall}/10 (was ${parsedQuality.overall}/10)`);
+          parsedQuality = reScore;
+        } catch (e) {
+          // Keep original score if re-parse fails
+        }
+      } catch (e) {
+        console.error(`   Quality revision failed: ${e.message}`);
+      }
     }
 
     return {

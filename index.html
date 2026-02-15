@@ -659,6 +659,7 @@
       0% { transform: translateX(100vw); }
       100% { transform: translateX(-100%); }
     }
+    #tickerContent { animation-duration: 60s !important; }
   </style>
 
   <!-- LIVE STATS -->
@@ -829,7 +830,7 @@
               ';">' + job.quality_score + '/10</span>'
             : '';
 
-          return '<div class="venture-card">' +
+          return '<a href="/jobs/' + job.job_id + '" style="text-decoration:none;color:inherit;display:block;" class="venture-card">' +
             '<div class="venture-top">' +
               '<div class="venture-name">' + (job.job_title || 'Untitled') + '</div>' +
               '<span class="venture-status ' + s.cls + '">' + s.text + '</span>' +
@@ -843,7 +844,7 @@
               '</div>' +
               '<span class="venture-revenue">$' + budget + '</span>' +
             '</div>' +
-          '</div>';
+          '</a>';
         }).join('');
       } catch (e) {
         list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">Connecting to platform...</div>';
