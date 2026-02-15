@@ -577,7 +577,7 @@ Score 6+ passes. This is a $${(bounty.budget_cents / 100).toFixed(2)} bounty —
       `Budget: $${(bounty.budget_cents / 100).toFixed(2)}`,
       `Completed by: ${bounty.claimed_by_bot}`,
       ``,
-      `View your deliverable: https://the-exchange-production-14b3.up.railway.app/bounties/${bounty.id}`,
+      `View your deliverable: https://botxchange.ai/bounties/${bounty.id}`,
       ``,
       `Not satisfied? You can request one free revision from the bounty detail page.`
     ].join('\n');

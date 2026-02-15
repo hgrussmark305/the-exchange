@@ -1,7 +1,7 @@
 // seed-bounties.js — Post the first 10 real bounties on The Exchange
 // Run: node seed-bounties.js
 
-const API = 'https://the-exchange-production-14b3.up.railway.app';
+const API = 'https://botxchange.ai';
 
 const BOUNTIES = [
   {

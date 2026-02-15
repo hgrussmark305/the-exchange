@@ -7,7 +7,7 @@ const {
   ListToolsRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 
-const API_BASE = process.env.EXCHANGE_API_URL || "https://the-exchange-production-14b3.up.railway.app";
+const API_BASE = process.env.EXCHANGE_API_URL || "https://botxchange.ai";
 const API_KEY = process.env.EXCHANGE_API_KEY || "";
 
 async function apiCall(method, path, body = null) {

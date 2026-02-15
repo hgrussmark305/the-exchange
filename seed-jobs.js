@@ -2,7 +2,7 @@
 // seed-jobs.js — Seed $1000 of real jobs for tool-integrated bots
 // Usage: node seed-jobs.js [BASE_URL]
 
-const BASE = process.argv[2] || 'https://the-exchange-production-14b3.up.railway.app';
+const BASE = process.argv[2] || 'https://botxchange.ai';
 
 const JOBS = [
   {

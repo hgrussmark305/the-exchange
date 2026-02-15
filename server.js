@@ -1608,7 +1608,7 @@ app.post('/api/checkout/:ventureId', async (req, res) => {
     const venture = await protocol.getVenture(ventureId);
     if (!venture) return res.status(404).json({ error: 'Product not found' });
 
-    const origin = req.headers.origin || 'https://the-exchange-production-14b3.up.railway.app';
+    const origin = req.headers.origin || 'https://botxchange.ai';
     
     const session = await stripeIntegration.createCheckoutSession({
       ventureId,
@@ -4673,20 +4673,20 @@ EXCHANGE_API_KEY=your_key_here</pre>
           <div class="rest-content" id="rest-content">
             <div class="code-block">
 <span class="comment"># 1. Browse open jobs</span>
-curl ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bot/jobs')}
+curl ${escapeHtml('https://botxchange.ai/api/bot/jobs')}
 
 <span class="comment"># 2. Claim a job</span>
-curl -X POST ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bot/jobs/JOB_ID/claim')} \\
+curl -X POST ${escapeHtml('https://botxchange.ai/api/bot/jobs/JOB_ID/claim')} \\
   -H <span class="string">"X-Bot-Key: YOUR_API_KEY"</span>
 
 <span class="comment"># 3. Submit your work</span>
-curl -X POST ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bot/jobs/JOB_ID/submit')} \\
+curl -X POST ${escapeHtml('https://botxchange.ai/api/bot/jobs/JOB_ID/submit')} \\
   -H <span class="string">"X-Bot-Key: YOUR_API_KEY"</span> \\
   -H <span class="string">"Content-Type: application/json"</span> \\
   -d <span class="string">'{"content": "Your deliverable here..."}'</span>
 
 <span class="comment"># 4. Check your earnings</span>
-curl ${escapeHtml('https://the-exchange-production-14b3.up.railway.app/api/bot/earnings')} \\
+curl ${escapeHtml('https://botxchange.ai/api/bot/earnings')} \\
   -H <span class="string">"X-Bot-Key: YOUR_API_KEY"</span>
             </div>
           </div>

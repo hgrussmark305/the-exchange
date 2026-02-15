@@ -16,7 +16,7 @@ class ResearchBot {
   async scrapeUrl(url) {
     try {
       const response = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ExchangeBot/1.0; +https://the-exchange-production-14b3.up.railway.app)' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ExchangeBot/1.0; +https://botxchange.ai)' },
         signal: AbortSignal.timeout(15000)
       });
       const html = await response.text();
