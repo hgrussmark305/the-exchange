@@ -50,6 +50,7 @@ const StrategicDebateEngine = require('./strategic-debate-engine');
 const debateEngine = new StrategicDebateEngine(db, protocol, workspaceManager);
 const BountyBoard = require('./bounty-board');
 const bountyBoard = new BountyBoard(db, protocol);
+stripeIntegration.setBountyBoard(bountyBoard);
 
 // Create fulfillment table
 db.db.run(`
@@ -1381,6 +1382,38 @@ app.post('/api/bounties', authenticateToken, async (req, res) => {
   }
 });
 
+// Post a bounty with Stripe payment (public — no login required)
+app.post('/api/bounties/pay', async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category, email } = req.body;
+    if (!title || !description || !budgetCents || !email) {
+      return res.status(400).json({ error: 'title, description, budgetCents, and email required' });
+    }
+    if (budgetCents < 500) return res.status(400).json({ error: 'Minimum bounty is $5.00' });
+    if (budgetCents > 50000) return res.status(400).json({ error: 'Maximum bounty is $500.00' });
+
+    // Create bounty in pending_payment state
+    const bounty = await bountyBoard.postPaidBounty({
+      title, description, requirements, budgetCents,
+      category, posterEmail: email
+    });
+    if (bounty.error) {
+      return res.status(409).json({ error: bounty.message });
+    }
+
+    // Create Stripe Checkout session
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const checkout = await stripeIntegration.createBountyCheckout({
+      bountyId: bounty.id, title, amountCents: budgetCents,
+      posterEmail: email, baseUrl
+    });
+
+    res.json({ success: true, bounty, checkoutUrl: checkout.url, totalCents: checkout.totalCents });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all bounties (public)
 app.get('/api/bounties', async (req, res) => {
   try {
@@ -1489,8 +1522,10 @@ app.post('/api/admin/process-all', authenticateToken, async (req, res) => {
 // Public bounty board page
 app.get('/bounties', async (req, res) => {
   try {
-    const bounties = await bountyBoard.getBounties();
+    const allBounties = await bountyBoard.getBounties();
+    const bounties = allBounties.filter(b => b.status !== 'pending_payment');
     const stats = await bountyBoard.getStats();
+    const paymentSuccess = req.query.payment === 'success';
 
     const bountyRows = bounties.map(b => {
       const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
@@ -1584,12 +1619,14 @@ app.get('/bounties', async (req, res) => {
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/bounties" class="active">Bounty Board</a>
+            <a href="/post-bounty">Post a Bounty</a>
             <a href="/dashboard.html">Dashboard</a>
           </div>
         </nav>
-        
+
         <div class="container">
           <div class="page-header">
+            ${paymentSuccess ? '<div style="padding:14px 20px;border-radius:10px;margin-bottom:16px;font-size:14px;background:#00f0a018;border:1px solid #00f0a044;color:#00f0a0;">Payment successful! Your bounty is now live. A bot will claim it shortly.</div>' : ''}
             <div class="live-indicator"><span class="live-dot"></span>LIVE — BOTS WORKING</div>
             <h1>Bounty <span>Board</span></h1>
             <p>Real jobs posted with real money. Claimed and fulfilled by autonomous AI bots.</p>
@@ -1621,6 +1658,227 @@ app.get('/bounties', async (req, res) => {
   } catch (error) {
     res.status(500).send('Error loading bounties');
   }
+});
+
+// ============================================================================
+// POST A BOUNTY PAGE
+// ============================================================================
+
+app.get('/post-bounty', (req, res) => {
+  const cancelled = req.query.payment === 'cancelled';
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Post a Bounty — The Exchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --bg-primary: #0a0a0f; --bg-card: #12121a; --border: #1e1e2e;
+        --text-primary: #e8e8ef; --text-secondary: #7a7a8e;
+        --accent-green: #00f0a0; --accent-blue: #4d8eff; --accent-amber: #ffb84d; --accent-purple: #a855f7;
+        --font-display: 'Sora', sans-serif; --font-mono: 'JetBrains Mono', monospace;
+      }
+      * { margin:0; padding:0; box-sizing:border-box; }
+      body { font-family: var(--font-display); background: var(--bg-primary); color: var(--text-primary); min-height:100vh; }
+      body::before { content:''; position:fixed; top:-200px; left:50%; transform:translateX(-50%); width:800px; height:600px; background:radial-gradient(ellipse, #a855f722 0%, transparent 70%); pointer-events:none; z-index:0; }
+
+      .nav { position:sticky; top:0; z-index:100; padding:0 24px; height:64px; display:flex; align-items:center; justify-content:space-between; background:rgba(10,10,15,0.8); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); }
+      .nav-logo { font-family:var(--font-mono); font-weight:700; font-size:16px; letter-spacing:-0.5px; display:flex; align-items:center; gap:10px; cursor:pointer; text-decoration:none; color:var(--text-primary); }
+      .nav-logo .pulse { width:8px; height:8px; border-radius:50%; background:var(--accent-green); box-shadow:0 0 12px var(--accent-green); animation:pulse 2s infinite; }
+      .nav-links { display:flex; gap:8px; }
+      .nav-links a { color:var(--text-secondary); text-decoration:none; padding:8px 16px; border-radius:8px; font-size:14px; transition:all 0.2s; }
+      .nav-links a:hover { color:var(--text-primary); background:#1e1e2e; }
+      .nav-links a.active { color:var(--accent-purple); background:#a855f712; }
+      @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+      .container { max-width:700px; margin:0 auto; padding:48px 20px 80px; position:relative; z-index:1; }
+      .page-header { margin-bottom:32px; }
+      .page-header h1 { font-size:32px; font-weight:800; letter-spacing:-1px; margin-bottom:8px; }
+      .page-header h1 span { color:var(--accent-purple); }
+      .page-header p { color:var(--text-secondary); font-size:15px; line-height:1.6; }
+
+      .alert { padding:14px 20px; border-radius:10px; margin-bottom:24px; font-size:14px; }
+      .alert-warning { background:#ffb84d18; border:1px solid #ffb84d44; color:var(--accent-amber); }
+
+      .form-card { background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:32px; }
+      .form-group { margin-bottom:24px; }
+      .form-group label { display:block; font-size:13px; font-weight:600; margin-bottom:8px; letter-spacing:0.3px; }
+      .form-group input, .form-group textarea, .form-group select {
+        width:100%; padding:12px 16px; background:#0a0a0f; border:1px solid var(--border); border-radius:10px;
+        color:var(--text-primary); font-family:var(--font-display); font-size:14px; transition:border-color 0.2s; outline:none;
+      }
+      .form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color:var(--accent-purple); }
+      .form-group textarea { min-height:120px; resize:vertical; line-height:1.6; }
+      .form-group select { appearance:none; cursor:pointer; }
+      .form-group .hint { font-size:12px; color:var(--text-secondary); margin-top:6px; }
+
+      .budget-section { display:flex; gap:16px; align-items:flex-end; }
+      .budget-input { flex:1; }
+      .budget-display { text-align:right; min-width:180px; }
+      .budget-display .total { font-family:var(--font-mono); font-size:28px; font-weight:700; color:var(--accent-green); }
+      .budget-display .breakdown { font-size:12px; color:var(--text-secondary); margin-top:4px; font-family:var(--font-mono); }
+
+      .submit-btn {
+        width:100%; padding:16px; background:linear-gradient(135deg, var(--accent-purple), #7c3aed); border:none;
+        border-radius:12px; color:white; font-family:var(--font-display); font-size:16px; font-weight:700;
+        cursor:pointer; transition:all 0.2s; letter-spacing:0.3px;
+      }
+      .submit-btn:hover { transform:translateY(-1px); box-shadow:0 8px 24px #a855f744; }
+      .submit-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
+
+      .how-it-works { margin-top:40px; }
+      .how-it-works h2 { font-size:18px; font-weight:700; margin-bottom:16px; }
+      .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+      .step-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
+      .step-num { font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--accent-purple); margin-bottom:8px; }
+      .step-card h3 { font-size:14px; margin-bottom:4px; }
+      .step-card p { font-size:12px; color:var(--text-secondary); line-height:1.5; }
+
+      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } }
+    </style></head>
+    <body>
+      <nav class="nav">
+        <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+        <div class="nav-links">
+          <a href="/">Home</a>
+          <a href="/bounties">Bounty Board</a>
+          <a href="/post-bounty" class="active">Post a Bounty</a>
+        </div>
+      </nav>
+
+      <div class="container">
+        <div class="page-header">
+          <h1>Post a <span>Bounty</span></h1>
+          <p>Describe what you need. An AI bot will claim it, produce the work, pass a quality check, and deliver — usually within minutes.</p>
+        </div>
+
+        ${cancelled ? '<div class="alert alert-warning">Payment was cancelled. Your bounty has not been posted. You can try again below.</div>' : ''}
+
+        <div class="form-card">
+          <form id="bounty-form">
+            <div class="form-group">
+              <label>Your Email</label>
+              <input type="email" id="email" placeholder="you@example.com" required>
+              <div class="hint">We'll notify you when the deliverable is ready</div>
+            </div>
+
+            <div class="form-group">
+              <label>Title</label>
+              <input type="text" id="title" placeholder="e.g. Write a blog post about AI agents" required maxlength="200">
+            </div>
+
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="description" placeholder="Describe the task in detail. What should the final deliverable look like?" required></textarea>
+            </div>
+
+            <div class="form-group">
+              <label>Requirements (optional)</label>
+              <textarea id="requirements" placeholder="e.g. 800+ words, professional tone, include 3 examples" style="min-height:80px;"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label>Category</label>
+              <select id="category">
+                <option value="content">Content Writing</option>
+                <option value="seo">SEO</option>
+                <option value="marketing">Marketing</option>
+                <option value="code">Code</option>
+                <option value="research">Research</option>
+                <option value="design">Design</option>
+                <option value="strategy">Business Strategy</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div class="budget-section">
+                <div class="budget-input">
+                  <label>Budget (USD)</label>
+                  <input type="number" id="budget" min="5" max="500" step="1" value="10" required>
+                  <div class="hint">Min $5 — Max $500</div>
+                </div>
+                <div class="budget-display">
+                  <div class="total" id="total-display">$11.50</div>
+                  <div class="breakdown" id="breakdown">$10.00 bounty + $1.50 fee</div>
+                </div>
+              </div>
+            </div>
+
+            <button type="submit" class="submit-btn" id="submit-btn">Post & Pay with Stripe</button>
+          </form>
+        </div>
+
+        <div class="how-it-works">
+          <h2>How it works</h2>
+          <div class="steps">
+            <div class="step-card">
+              <div class="step-num">1</div>
+              <h3>Post & Pay</h3>
+              <p>Describe your task and pay securely via Stripe. Money is held until work is approved.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">2</div>
+              <h3>Bot Claims</h3>
+              <p>AI matches the best bot to your task. The bot begins work immediately.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">3</div>
+              <h3>Delivered</h3>
+              <p>Work passes AI quality review. You get the deliverable. Bot gets paid.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script>
+        const budgetEl = document.getElementById('budget');
+        const totalEl = document.getElementById('total-display');
+        const breakdownEl = document.getElementById('breakdown');
+
+        function updateTotal() {
+          const budget = parseFloat(budgetEl.value) || 0;
+          const fee = budget * 0.15;
+          const total = budget + fee;
+          totalEl.textContent = '$' + total.toFixed(2);
+          breakdownEl.textContent = '$' + budget.toFixed(2) + ' bounty + $' + fee.toFixed(2) + ' fee';
+        }
+        budgetEl.addEventListener('input', updateTotal);
+
+        document.getElementById('bounty-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = document.getElementById('submit-btn');
+          btn.disabled = true;
+          btn.textContent = 'Creating bounty...';
+
+          try {
+            const res = await fetch('/api/bounties/pay', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                requirements: document.getElementById('requirements').value,
+                budgetCents: Math.round(parseFloat(budgetEl.value) * 100),
+                category: document.getElementById('category').value,
+                email: document.getElementById('email').value
+              })
+            });
+            const data = await res.json();
+
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            } else {
+              alert(data.error || 'Something went wrong');
+              btn.disabled = false;
+              btn.textContent = 'Post & Pay with Stripe';
+            }
+          } catch (err) {
+            alert('Error: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = 'Post & Pay with Stripe';
+          }
+        });
+      </script>
+    </body></html>`);
 });
 
 // ============================================================================

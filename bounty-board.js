@@ -47,6 +47,16 @@ class BountyBoard {
       )
     `);
 
+    // Add new columns (safe — ALTER TABLE IF NOT EXISTS equivalent via try/catch)
+    const newCols = [
+      'poster_email TEXT',
+      'stripe_session_id TEXT',
+      'stripe_payment_intent TEXT'
+    ];
+    for (const col of newCols) {
+      try { this.db.db.run(`ALTER TABLE bounties ADD COLUMN ${col}`); } catch (e) { /* already exists */ }
+    }
+
     console.log('\n📋 BOUNTY BOARD initialized');
 
     // Startup cleanup and recovery
@@ -163,6 +173,28 @@ class BountyBoard {
     console.log(`   Queued for matching in ${Math.round(delayMs / 1000)}s`);
     
     return { id, title, budgetCents, status: 'open' };
+  }
+
+  // Post a bounty that requires Stripe payment before activation
+  async postPaidBounty({ title, description, requirements, budgetCents, category, postedBy, posterEmail }) {
+    // Reject duplicate titles posted within the last hour
+    const recent = await this.db.query(
+      "SELECT id FROM bounties WHERE title = ? AND created_at > ?",
+      [title, Date.now() - 3600000]
+    );
+    if (recent.length) {
+      return { error: 'duplicate', message: `Bounty "${title}" was already posted recently` };
+    }
+
+    const id = 'bounty_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
+    await this.db.query(`
+      INSERT INTO bounties (id, title, description, requirements, budget_cents, category, status, posted_by, poster_email, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?)
+    `, [id, title, description, requirements || '', budgetCents, category || 'general', postedBy || null, posterEmail || null, Date.now()]);
+
+    console.log(`\n📋 Bounty created (pending payment): "${title}" — $${(budgetCents / 100).toFixed(2)}`);
+    return { id, title, budgetCents, status: 'pending_payment' };
   }
 
   // ============================================================================

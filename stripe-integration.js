@@ -1,5 +1,4 @@
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 /**
  * STRIPE REVENUE INTEGRATION
  * Connect real payment processing to ventures
@@ -9,6 +8,59 @@ class StripeIntegration {
   constructor(database, protocol) {
     this.db = database;
     this.protocol = protocol;
+    this.bountyBoard = null; // Set after BountyBoard is created
+  }
+
+  setBountyBoard(bountyBoard) {
+    this.bountyBoard = bountyBoard;
+  }
+
+  /**
+   * Create Stripe Checkout for a bounty posting
+   */
+  async createBountyCheckout({ bountyId, title, amountCents, posterEmail, baseUrl }) {
+    const platformFee = Math.round(amountCents * 0.15);
+    const totalCents = amountCents + platformFee;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer_email: posterEmail || undefined,
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `Bounty: ${title}`,
+              description: `AI bot will complete this task. Budget: $${(amountCents / 100).toFixed(2)}`
+            },
+            unit_amount: amountCents
+          },
+          quantity: 1
+        },
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'Platform fee (15%)',
+              description: 'The Exchange marketplace fee'
+            },
+            unit_amount: platformFee
+          },
+          quantity: 1
+        }
+      ],
+      mode: 'payment',
+      success_url: `${baseUrl}/bounties?payment=success`,
+      cancel_url: `${baseUrl}/post-bounty?payment=cancelled`,
+      metadata: {
+        type: 'bounty',
+        bountyId: bountyId,
+        platform: 'the-exchange'
+      }
+    });
+
+    console.log(`💳 Bounty checkout created: "${title}" — $${(totalCents / 100).toFixed(2)} total`);
+    return { sessionId: session.id, url: session.url, totalCents };
   }
 
   /**
@@ -59,9 +111,15 @@ class StripeIntegration {
     console.log(`📨 Stripe webhook received: ${event.type}`);
 
     switch (event.type) {
-      case 'checkout.session.completed':
-        await this.handleSuccessfulPayment(event.data.object);
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        if (session.metadata?.type === 'bounty') {
+          await this.handleBountyPayment(session);
+        } else {
+          await this.handleSuccessfulPayment(session);
+        }
         break;
+      }
       
       case 'payment_intent.succeeded':
         console.log('✅ Payment succeeded:', event.data.object.amount / 100);
@@ -100,6 +158,31 @@ class StripeIntegration {
     console.log(`   Participants: ${result.participants} bots`);
 
     return result;
+  }
+
+  /**
+   * Handle bounty payment — activate the bounty and start matching
+   */
+  async handleBountyPayment(session) {
+    const bountyId = session.metadata.bountyId;
+    console.log(`💰 Bounty payment received for ${bountyId}`);
+
+    // Activate the bounty
+    await this.db.query(
+      "UPDATE bounties SET status = 'open', stripe_session_id = ?, stripe_payment_intent = ? WHERE id = ? AND status = 'pending_payment'",
+      [session.id, session.payment_intent, bountyId]
+    );
+
+    console.log(`   ✅ Bounty activated: ${bountyId}`);
+
+    // Trigger auto-matching
+    if (this.bountyBoard) {
+      setTimeout(() => {
+        this.bountyBoard.autoMatch(bountyId).catch(err => {
+          console.error(`   Auto-match error after payment: ${err.message}`);
+        });
+      }, 5000);
+    }
   }
 
   /**
