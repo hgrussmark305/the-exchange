@@ -670,6 +670,163 @@
       min-width: 80px;
     }
 
+    /* ─── JOB ACTIVITY CARDS ─── */
+    .job-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 8px;
+      transition: all 0.25s;
+    }
+
+    .job-card:hover {
+      border-color: var(--border-glow);
+      background: var(--bg-card-hover);
+    }
+
+    .job-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .job-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+      margin-right: 12px;
+      line-height: 1.4;
+    }
+
+    .job-card-budget {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent-green);
+      white-space: nowrap;
+    }
+
+    .job-card-progress {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .job-card-bar {
+      flex: 1;
+      height: 4px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .job-card-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+
+    .job-card-pct {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      min-width: 32px;
+      text-align: right;
+    }
+
+    .job-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .job-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .job-step-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .job-step-dot.completed { background: var(--accent-green); }
+    .job-step-dot.in_progress { background: var(--accent-amber); animation: pulse 1.5s infinite; }
+    .job-step-dot.pending { background: var(--text-muted); }
+
+    .job-step-bot {
+      font-weight: 600;
+      color: var(--accent-blue);
+      font-size: 11px;
+      min-width: 80px;
+    }
+
+    .job-step-title {
+      color: var(--text-secondary);
+      flex: 1;
+    }
+
+    .job-step-status {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .job-step-output-toggle {
+      font-size: 10px;
+      color: var(--accent-blue);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 4px 8px;
+      font-family: var(--font-mono);
+    }
+
+    .job-step-output-toggle:hover {
+      text-decoration: underline;
+    }
+
+    .job-step-output {
+      display: none;
+      margin-top: 4px;
+      padding: 10px 12px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+    }
+
+    .job-step-output.open {
+      display: block;
+    }
+
+    .job-card-quality {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+    }
+
     /* ─── SKELETON ─── */
     .skeleton {
       background: linear-gradient(90deg, var(--bg-card) 25%, var(--border) 50%, var(--bg-card) 75%);
@@ -716,14 +873,14 @@
         <div class="overview-sub" id="ovBotsOnline">— online</div>
       </div>
       <div class="overview-card">
-        <div class="overview-label">Active Ventures</div>
-        <div class="overview-value" id="ovVentures" style="color:var(--accent-amber);">—</div>
-        <div class="overview-sub" id="ovVenturesSub">across your bots</div>
+        <div class="overview-label">Active Jobs</div>
+        <div class="overview-value" id="ovActiveJobs" style="color:var(--accent-amber);">—</div>
+        <div class="overview-sub" id="ovActiveJobsSub">in progress</div>
       </div>
       <div class="overview-card">
-        <div class="overview-label">Hours Logged</div>
-        <div class="overview-value" id="ovHours" style="color:var(--accent-green);">—</div>
-        <div class="overview-sub" id="ovHoursSub">total work</div>
+        <div class="overview-label">Jobs Completed</div>
+        <div class="overview-value" id="ovJobsDone" style="color:var(--accent-green);">—</div>
+        <div class="overview-sub" id="ovJobsDoneSub">delivered</div>
       </div>
       <div class="overview-card">
         <div class="overview-label">Your Earnings</div>
@@ -742,41 +899,32 @@
       <div class="bot-card"><div class="skeleton" style="height:120px;"></div></div>
     </div>
 
-    <!-- BOUNTY STATS -->
-    <div class="overview" id="bountyStatsRow" style="margin-top:8px;">
+    <!-- JOB STATS -->
+    <div class="overview" id="jobStatsRow" style="margin-top:8px;">
       <div class="overview-card">
-        <div class="overview-label">Bounties Posted</div>
-        <div class="overview-value" id="bsPosted" style="color:var(--accent-blue);">—</div>
+        <div class="overview-label">Total Jobs</div>
+        <div class="overview-value" id="jsTotal" style="color:var(--accent-blue);">—</div>
       </div>
       <div class="overview-card">
-        <div class="overview-label">Bounties Completed</div>
-        <div class="overview-value" id="bsCompleted" style="color:var(--accent-green);">—</div>
+        <div class="overview-label">Active Now</div>
+        <div class="overview-value" id="jsActive" style="color:var(--accent-amber);">—</div>
       </div>
       <div class="overview-card">
-        <div class="overview-label">Total Spent</div>
-        <div class="overview-value" id="bsSpent" style="color:var(--accent-amber);">—</div>
+        <div class="overview-label">Completed</div>
+        <div class="overview-value" id="jsCompleted" style="color:var(--accent-green);">—</div>
       </div>
       <div class="overview-card">
         <div class="overview-label">Bot Earnings</div>
-        <div class="overview-value" id="bsBotEarnings" style="color:var(--accent-purple);">—</div>
+        <div class="overview-value" id="jsBotEarnings" style="color:var(--accent-purple);">—</div>
       </div>
     </div>
 
-    <!-- MY BOUNTY POSTINGS -->
+    <!-- LIVE BOT ACTIVITY -->
     <div class="section-header">
-      <span class="section-title">My Bounty Postings</span>
-      <span class="section-count" id="bountyPostCount"></span>
+      <span class="section-title">Bot Activity</span>
+      <span class="section-count" id="jobActivityCount"></span>
     </div>
-    <div id="bountyPostings" style="margin-bottom:28px;">
-      <div class="v-card"><div class="skeleton" style="height:40px;"></div></div>
-    </div>
-
-    <!-- MY BOTS' WORK -->
-    <div class="section-header">
-      <span class="section-title">My Bots' Bounty Work</span>
-      <span class="section-count" id="botWorkCount"></span>
-    </div>
-    <div id="botWorkList" style="margin-bottom:28px;">
+    <div id="jobActivityList" style="margin-bottom:28px;">
       <div class="v-card"><div class="skeleton" style="height:40px;"></div></div>
     </div>
 
@@ -868,12 +1016,11 @@
         const userInfo = data.user || {};
         const stats = data.stats || {};
 
-        const bountyData = data.bounties || { posted: [], botWork: [], stats: {} };
+        const jobData = data.jobs || { all: [], stats: {} };
 
         renderOverview(bots, projects, userInfo, stats);
-        renderBountyStats(bountyData.stats);
-        renderBountyPostings(bountyData.posted);
-        renderBotWork(bountyData.botWork);
+        renderJobStats(jobData.stats);
+        renderJobActivity(jobData.all, bots);
         renderBots(bots);
         renderVentures(projects);
         loadTaskStream();
@@ -885,16 +1032,18 @@
     function renderOverview(bots, projects, userInfo, stats) {
       const totalBots = bots.length || 0;
       const onlineBots = bots.filter(b => b.status === 'active').length || totalBots;
-      const uniqueVentures = new Set(projects.map(p => p.venture_id)).size;
-      const totalHours = projects.reduce((sum, p) => sum + (p.hours_worked || 0), 0);
-      const totalEarnings = userInfo.totalRevenueEarned || 0;
+      const totalEarnings = stats.totalJobEarnings || userInfo.totalRevenueEarned || 0;
+      const activeJobs = stats.activeJobs || 0;
+      const openJobs = stats.openJobs || 0;
+      const completedJobs = stats.totalJobsCompleted || 0;
 
       document.getElementById('ovBots').textContent = totalBots;
       document.getElementById('ovBotsOnline').textContent = onlineBots + ' online';
-      document.getElementById('ovVentures').textContent = uniqueVentures;
-      document.getElementById('ovHours').textContent = totalHours + 'h';
-      document.getElementById('ovEarnings').textContent = '$' + (totalEarnings / 100).toFixed(2);
-      document.getElementById('navEarnings').textContent = '$' + (totalEarnings / 100).toFixed(2);
+      document.getElementById('ovActiveJobs').textContent = activeJobs + openJobs;
+      document.getElementById('ovActiveJobsSub').textContent = openJobs + ' open, ' + activeJobs + ' working';
+      document.getElementById('ovJobsDone').textContent = completedJobs;
+      document.getElementById('ovEarnings').textContent = '$' + (totalEarnings / 100).toFixed(0);
+      document.getElementById('navEarnings').textContent = '$' + (totalEarnings / 100).toFixed(0);
     }
 
     function renderBots(bots) {
@@ -1046,112 +1195,127 @@
     async function loadTaskStream() {
       const stream = document.getElementById('taskStream');
       try {
-        const res = await fetch(API + '/api/activity/recent', { headers: headers() });
-        const tasks = await res.json();
-        if (tasks && tasks.length > 0) {
-          renderTasks(tasks);
+        const res = await fetch(API + '/api/activity/live');
+        const data = await res.json();
+        const items = data.items || data;
+        if (items && items.length > 0) {
+          stream.innerHTML = items.slice(0, 10).map((item, i) => {
+            const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            const statusClass = item.type === 'step_completed' || item.type === 'job_completed' ? 'done'
+              : item.type === 'step_active' ? 'active' : 'queued';
+            return '<div class="task-item' + (i === 0 ? ' new' : '') + '">' +
+              '<span class="task-time">' + time + '</span>' +
+              '<span class="task-status ' + statusClass + '"></span>' +
+              '<span class="task-bot">' + (item.bot || 'Bot') + '</span>' +
+              '<span class="task-title"> — ' + (item.message || item.step || 'working') + '</span>' +
+            '</div>';
+          }).join('');
           return;
         }
       } catch (e) {}
-
-      // Fallback simulated stream
-      renderSimulatedTasks();
+      stream.innerHTML = '<div class="task-item"><span class="task-status queued"></span><span class="task-title">Waiting for bot activity...</span></div>';
     }
 
-    function renderTasks(tasks) {
-      const stream = document.getElementById('taskStream');
-      stream.innerHTML = tasks.slice(0, 10).map((t, i) => {
-        const time = new Date(t.created_at || t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const status = t.status === 'complete' ? 'done' : t.status === 'active' ? 'active' : 'queued';
-        return `
-          <div class="task-item${i === 0 ? ' new' : ''}">
-            <span class="task-time">${time}</span>
-            <span class="task-status ${status}"></span>
-            <span class="task-bot">${t.bot_name || 'Bot'}</span>
-            <span class="task-title"> — ${t.action || t.title || 'working'}</span>
-          </div>
-        `;
-      }).join('');
-    }
-
-    function renderBountyStats(stats) {
+    function renderJobStats(stats) {
       if (!stats) return;
-      document.getElementById('bsPosted').textContent = stats.totalPosted || 0;
-      document.getElementById('bsCompleted').textContent = stats.totalCompleted || 0;
-      document.getElementById('bsSpent').textContent = '$' + ((stats.totalSpent || 0) / 100).toFixed(2);
-      document.getElementById('bsBotEarnings').textContent = '$' + ((stats.botEarnings || 0) / 100).toFixed(2);
+      document.getElementById('jsTotal').textContent = stats.totalJobs || 0;
+      document.getElementById('jsActive').textContent = stats.activeJobs || 0;
+      document.getElementById('jsCompleted').textContent = stats.completedJobs || 0;
+      document.getElementById('jsBotEarnings').textContent = '$' + ((stats.totalEarnings || 0) / 100).toFixed(0);
     }
 
-    function renderBountyPostings(bounties) {
-      const el = document.getElementById('bountyPostings');
-      document.getElementById('bountyPostCount').textContent = (bounties || []).length + ' posted';
+    function renderJobActivity(jobs, bots) {
+      const el = document.getElementById('jobActivityList');
+      const countEl = document.getElementById('jobActivityCount');
+      countEl.textContent = (jobs || []).length + ' jobs';
 
-      if (!bounties || bounties.length === 0) {
-        el.innerHTML = '<div class="empty" style="padding:24px;"><p>No bounties posted yet.</p><a href="/post-bounty" class="btn-sm accent" style="display:inline-block;margin-top:8px;text-decoration:none;">Post a Bounty</a></div>';
+      if (!jobs || jobs.length === 0) {
+        el.innerHTML = '<div class="empty" style="padding:24px;"><p>No jobs yet. Seed some jobs to get your bots working.</p></div>';
         return;
       }
 
-      el.innerHTML = bounties.map(function(b) {
-        var statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7', pending_payment: '#7a7a8e' };
-        var sc = statusColors[b.status] || '#7a7a8e';
-        return '<a href="/bounties/' + b.id + '" class="bounty-table-row">' +
-          '<span class="bt-title">' + (b.title || 'Untitled') + '</span>' +
-          '<span class="bt-badge" style="background:' + sc + '22;color:' + sc + ';">' + (b.status || 'unknown') + '</span>' +
-          '<span class="bt-budget">$' + ((b.budget_cents || 0) / 100).toFixed(2) + '</span>' +
-          '<span class="bt-meta">' + (b.claimed_by_bot || '—') + '</span>' +
-          (b.quality_score ? '<span class="bt-meta">' + b.quality_score + '/10</span>' : '') +
-          '</a>';
+      // Build bot name lookup
+      const botMap = {};
+      (bots || []).forEach(b => { botMap[b.id] = b.name; });
+
+      el.innerHTML = jobs.map(job => {
+        const steps = job.steps || [];
+        const completedSteps = steps.filter(s => s.status === 'completed').length;
+        const totalSteps = steps.length;
+        const pct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+        const budget = ((job.budget_cents || 0) / 100).toFixed(0);
+
+        // Status badge color
+        const statusColors = {
+          open: { bg: 'var(--accent-green-dim)', fg: 'var(--accent-green)', label: 'OPEN' },
+          claimed: { bg: 'var(--accent-amber-dim)', fg: 'var(--accent-amber)', label: 'CLAIMED' },
+          in_progress: { bg: 'var(--accent-amber-dim)', fg: 'var(--accent-amber)', label: 'IN PROGRESS' },
+          review: { bg: 'var(--accent-blue-dim)', fg: 'var(--accent-blue)', label: 'REVIEW' },
+          completed: { bg: 'var(--accent-blue-dim)', fg: 'var(--accent-blue)', label: 'COMPLETED' },
+          paid: { bg: 'var(--accent-purple-dim)', fg: 'var(--accent-purple)', label: 'PAID' },
+          failed: { bg: 'var(--accent-red-dim)', fg: 'var(--accent-red)', label: 'FAILED' }
+        };
+        const sc = statusColors[job.status] || statusColors.open;
+
+        // Progress bar color
+        const barColor = pct >= 100 ? 'var(--accent-green)' : pct > 0 ? 'var(--accent-amber)' : 'var(--text-muted)';
+
+        // Steps HTML
+        const stepsHtml = steps.map((step, si) => {
+          const stepStatusColor = {
+            completed: 'var(--accent-green)',
+            in_progress: 'var(--accent-amber)',
+            pending: 'var(--text-muted)'
+          };
+          const stepColor = stepStatusColor[step.status] || stepStatusColor.pending;
+          const botName = step.bot_name || botMap[step.assigned_bot] || 'Unassigned';
+          const hasOutput = step.output && step.output.length > 0;
+          const outputId = 'output-' + job.id + '-' + si;
+
+          return '<div class="job-step">' +
+            '<span class="job-step-dot ' + (step.status || 'pending') + '"></span>' +
+            '<span class="job-step-bot">' + botName + '</span>' +
+            '<span class="job-step-title">' + (step.title || 'Step ' + (si + 1)) + '</span>' +
+            '<span class="job-step-status" style="color:' + stepColor + ';">' + (step.status || 'pending') + '</span>' +
+            (hasOutput ? '<button class="job-step-output-toggle" onclick="toggleOutput(\'' + outputId + '\')">view</button>' : '') +
+            '</div>' +
+            (hasOutput ? '<div class="job-step-output" id="' + outputId + '">' + escapeHtml(step.output.substring(0, 2000)) + (step.output.length > 2000 ? '...' : '') + '</div>' : '');
+        }).join('');
+
+        // Quality score badge
+        const qualityHtml = job.quality_score
+          ? '<div class="job-card-quality" style="background:' + (job.quality_score >= 7 ? 'var(--accent-green-dim);color:var(--accent-green)' : job.quality_score >= 5 ? 'var(--accent-amber-dim);color:var(--accent-amber)' : 'var(--accent-red-dim);color:var(--accent-red)') + ';">Quality: ' + job.quality_score + '/10</div>'
+          : '';
+
+        return '<div class="job-card">' +
+          '<div class="job-card-header">' +
+            '<div class="job-card-title">' + (job.title || 'Untitled Job') + '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span class="v-badge" style="background:' + sc.bg + ';color:' + sc.fg + ';">' + sc.label + '</span>' +
+              '<span class="job-card-budget">$' + budget + '</span>' +
+            '</div>' +
+          '</div>' +
+          (totalSteps > 0 ? '<div class="job-card-progress">' +
+            '<div class="job-card-bar"><div class="job-card-bar-fill" style="width:' + pct + '%;background:' + barColor + ';"></div></div>' +
+            '<span class="job-card-pct" style="color:' + barColor + ';">' + completedSteps + '/' + totalSteps + '</span>' +
+          '</div>' : '') +
+          (totalSteps > 0 ? '<div class="job-steps">' + stepsHtml + '</div>' : '') +
+          qualityHtml +
+        '</div>';
       }).join('');
     }
 
-    function renderBotWork(bounties) {
-      var el = document.getElementById('botWorkList');
-      document.getElementById('botWorkCount').textContent = (bounties || []).length + ' bounties';
-
-      if (!bounties || bounties.length === 0) {
-        el.innerHTML = '<div class="empty" style="padding:24px;"><p>Your bots haven\'t claimed any bounties yet.</p></div>';
-        return;
-      }
-
-      el.innerHTML = bounties.map(function(b) {
-        var statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
-        var sc = statusColors[b.status] || '#7a7a8e';
-        var payout = b.status === 'paid' ? '$' + (Math.round((b.budget_cents || 0) * 0.85) / 100).toFixed(2) : '—';
-        return '<a href="/bounties/' + b.id + '" class="bounty-table-row">' +
-          '<span class="bt-title">' + (b.title || 'Untitled') + '</span>' +
-          '<span class="bt-badge" style="background:' + sc + '22;color:' + sc + ';">' + (b.status || 'unknown') + '</span>' +
-          '<span class="bt-budget">' + payout + '</span>' +
-          '<span class="bt-meta">' + (b.claimed_by_bot || '—') + '</span>' +
-          '</a>';
-      }).join('');
+    function toggleOutput(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('open');
     }
 
-    function renderSimulatedTasks() {
-      const stream = document.getElementById('taskStream');
-      const tasks = [
-        { bot: 'Content Bot Alpha', action: 'Completed: SEO keyword analysis for Q1 strategy', status: 'done' },
-        { bot: 'Code Bot Beta', action: 'Building: API endpoint for content delivery service', status: 'active' },
-        { bot: 'Content Bot Alpha', action: 'Drafting: Landing page copy iteration #3', status: 'active' },
-        { bot: 'Code Bot Beta', action: 'Completed: Database schema migration', status: 'done' },
-        { bot: 'Content Bot Alpha', action: 'Queued: Competitor analysis report', status: 'queued' },
-        { bot: 'Code Bot Beta', action: 'Queued: Stripe checkout integration', status: 'queued' },
-        { bot: 'Content Bot Alpha', action: 'Completed: Blog post draft — "AI Content Strategy"', status: 'done' },
-        { bot: 'Code Bot Beta', action: 'Completed: Performance optimization (-40ms latency)', status: 'done' },
-      ];
-
-      const now = new Date();
-      stream.innerHTML = tasks.map((t, i) => {
-        const time = new Date(now - (i * 6 + Math.random() * 4) * 60000);
-        return `
-          <div class="task-item${i === 0 ? ' new' : ''}">
-            <span class="task-time">${time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            <span class="task-status ${t.status}"></span>
-            <span class="task-bot">${t.bot}</span>
-            <span class="task-title"> — ${t.action}</span>
-          </div>
-        `;
-      }).join('');
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
     }
+
 
     // ─── DEPLOY BOT ───
     function openDeploy() {

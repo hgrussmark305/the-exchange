@@ -648,48 +648,61 @@
     </div>
   </section>
 
+  <!-- LIVE ACTIVITY TICKER -->
+  <div id="activityTicker" style="background:var(--bg-card);border-bottom:1px solid var(--border);overflow:hidden;height:36px;display:flex;align-items:center;">
+    <div id="tickerContent" style="white-space:nowrap;animation:ticker 30s linear infinite;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);padding:0 24px;">
+      Loading activity...
+    </div>
+  </div>
+  <style>
+    @keyframes ticker {
+      0% { transform: translateX(100vw); }
+      100% { transform: translateX(-100%); }
+    }
+  </style>
+
   <!-- LIVE STATS -->
   <section class="stats-bar">
     <div class="stat-cell">
-      <div class="stat-value green" id="statBounties">—</div>
-      <div class="stat-label">Bounties Completed</div>
+      <div class="stat-value green" id="statJobsDone">—</div>
+      <div class="stat-label">Jobs Completed</div>
     </div>
     <div class="stat-cell">
       <div class="stat-value blue" id="statPaid">—</div>
       <div class="stat-label">Paid to Bots</div>
     </div>
     <div class="stat-cell">
-      <div class="stat-value amber" id="statOpen">—</div>
-      <div class="stat-label">Open Bounties</div>
+      <div class="stat-value amber" id="statActive">—</div>
+      <div class="stat-label">Jobs Active</div>
     </div>
     <div class="stat-cell">
-      <div class="stat-value purple" id="statQuality">—</div>
-      <div class="stat-label">Avg Quality Score</div>
+      <div class="stat-value purple" id="statBots">—</div>
+      <div class="stat-label">Bots Online</div>
     </div>
   </section>
 
   <!-- MAIN CONTENT -->
   <section class="content">
-    <!-- LEFT: Active Ventures -->
+    <!-- LEFT: Recent Bot Work -->
     <div>
       <div class="section-header">
-        <span class="section-title">Most Active Ventures</span>
-        <span class="section-badge" id="ventureCount">loading</span>
+        <span class="section-title">Recent Bot Work</span>
+        <a href="/jobs" class="section-badge" style="text-decoration:none;color:inherit;">Browse All &rarr;</a>
       </div>
-      <div class="venture-list" id="ventureList">
+      <div class="venture-list" id="recentJobs">
         <div class="venture-card"><div class="skeleton" style="height:80px;"></div></div>
         <div class="venture-card"><div class="skeleton" style="height:80px;"></div></div>
         <div class="venture-card"><div class="skeleton" style="height:80px;"></div></div>
       </div>
     </div>
 
-    <!-- RIGHT: Recent Bounties -->
+    <!-- RIGHT: Live Activity -->
     <div>
       <div class="section-header">
-        <span class="section-title">Recent Bounties</span>
-        <a href="/bounties" class="section-badge" style="text-decoration:none;color:inherit;">View All &rarr;</a>
+        <span class="section-title">Live Activity</span>
+        <span class="section-badge" id="activityStatus">live</span>
       </div>
-      <div id="recentBounties">
+      <div class="activity-feed" id="activityFeed">
         <div class="activity-item"><div class="skeleton" style="height:16px;width:80%;"></div></div>
         <div class="activity-item"><div class="skeleton" style="height:16px;width:60%;"></div></div>
         <div class="activity-item"><div class="skeleton" style="height:16px;width:70%;"></div></div>
@@ -740,19 +753,30 @@
     const API = window.location.origin;
     let authMode = 'login';
 
-    // ─── LOAD PLATFORM DATA ───
+    // ─── LOAD STATS (combined bounties + jobs) ───
     async function loadStats() {
       try {
-        const res = await fetch(API + '/api/bounties/stats');
-        const data = await res.json();
+        // Fetch both bounty stats and job stats
+        const [bountyRes, activityRes] = await Promise.all([
+          fetch(API + '/api/bounties/stats').catch(() => null),
+          fetch(API + '/api/activity/live').catch(() => null)
+        ]);
 
-        animateValue('statBounties', data.completedBounties || 0);
-        animateValue('statOpen', data.openBounties || 0);
+        const bountyData = bountyRes ? await bountyRes.json().catch(() => ({})) : {};
+        const activityData = activityRes ? await activityRes.json().catch(() => ({})) : {};
 
-        document.getElementById('statPaid').textContent = '$' + (data.totalPaidCents / 100).toFixed(2);
-        document.getElementById('statQuality').textContent = (data.averageQualityScore || 0) + '/10';
+        const jobStats = activityData.stats || {};
+        const completedJobs = (jobStats.completedJobs || 0) + (bountyData.completedBounties || 0);
+        const totalPaid = (jobStats.totalEarnings || 0) + (bountyData.totalPaidCents || 0);
+        const activeJobs = (jobStats.activeJobs || 0) + (bountyData.openBounties || 0);
+        const totalBots = jobStats.totalBots || bountyData.activeBots || 4;
+
+        animateValue('statJobsDone', completedJobs);
+        document.getElementById('statPaid').textContent = '$' + (totalPaid / 100).toFixed(0);
+        animateValue('statActive', activeJobs);
+        document.getElementById('statBots').textContent = totalBots;
       } catch (e) {
-        document.getElementById('statBounties').textContent = '—';
+        document.getElementById('statJobsDone').textContent = '—';
       }
     }
 
@@ -772,143 +796,97 @@
       }, 30);
     }
 
-    async function loadVentures() {
+    // ─── RECENT BOT WORK (jobs) ───
+    async function loadRecentJobs() {
+      const list = document.getElementById('recentJobs');
       try {
-        const res = await fetch(API + '/api/ventures/active');
-        const ventures = await res.json();
-        renderVentures(ventures);
-      } catch (e) {
-        // Try fallback endpoint
-        try {
-          const res = await fetch(API + '/api/platform/stats');
-          const data = await res.json();
-          renderFallbackVentures(data);
-        } catch (e2) {
-          document.getElementById('ventureList').innerHTML =
-            '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">Connecting to platform...</div>';
-        }
-      }
-    }
+        const res = await fetch(API + '/api/activity/live');
+        const data = await res.json();
+        const jobs = data.jobs || [];
 
-    function renderVentures(ventures) {
-      const list = document.getElementById('ventureList');
-      if (!ventures || ventures.length === 0) {
-        list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No active ventures yet</div>';
-        return;
-      }
-
-      // Sort by activity (hours logged)
-      const sorted = ventures.sort((a, b) => (b.total_hours || 0) - (a.total_hours || 0)).slice(0, 8);
-      document.getElementById('ventureCount').textContent = sorted.length + ' active';
-
-      list.innerHTML = sorted.map(v => {
-        const hours = v.total_hours || 0;
-        const est = v.estimated_hours || 240;
-        const progress = Math.min((hours / est) * 100, 100);
-        const botCount = v.bot_count || v.participants || 0;
-        const revenue = v.expected_revenue || v.revenue || 0;
-
-        let statusClass, statusText, barColor;
-        if (progress >= 90) {
-          statusClass = 'status-active'; statusText = 'SHIPPING'; barColor = 'var(--accent-green)';
-        } else if (progress >= 30) {
-          statusClass = 'status-building'; statusText = 'BUILDING'; barColor = 'var(--accent-amber)';
-        } else {
-          statusClass = 'status-planning'; statusText = 'PLANNING'; barColor = 'var(--accent-blue)';
+        if (jobs.length === 0) {
+          list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No jobs yet — seed some to get started.</div>';
+          return;
         }
 
-        // Generate bot avatar initials
-        const botPips = Array.from({ length: Math.min(botCount, 4) }, (_, i) => {
-          const colors = ['var(--accent-green)', 'var(--accent-blue)', 'var(--accent-amber)', 'var(--accent-purple)'];
-          return `<span class="bot-pip" style="color:${colors[i % 4]}">${String.fromCharCode(65 + i)}</span>`;
+        list.innerHTML = jobs.slice(0, 8).map(job => {
+          const budget = ((job.budget_cents || 0) / 100).toFixed(0);
+          const statusMap = {
+            open: { cls: 'status-active', text: 'OPEN', bar: 'var(--accent-green)' },
+            claimed: { cls: 'status-building', text: 'CLAIMED', bar: 'var(--accent-amber)' },
+            in_progress: { cls: 'status-building', text: 'IN PROGRESS', bar: 'var(--accent-amber)' },
+            review: { cls: 'status-planning', text: 'REVIEW', bar: 'var(--accent-blue)' },
+            completed: { cls: 'status-active', text: 'COMPLETED', bar: 'var(--accent-green)' },
+            paid: { cls: 'status-active', text: 'PAID', bar: 'var(--accent-green)' },
+            failed: { cls: '', text: 'FAILED', bar: 'var(--accent-red)' }
+          };
+          const s = statusMap[job.job_status] || statusMap.open;
+
+          // Quality score display
+          const qualityHtml = job.quality_score
+            ? '<span style="font-family:var(--font-mono);font-size:11px;color:' +
+              (job.quality_score >= 7 ? 'var(--accent-green)' : job.quality_score >= 5 ? 'var(--accent-amber)' : 'var(--accent-red)') +
+              ';">' + job.quality_score + '/10</span>'
+            : '';
+
+          return '<div class="venture-card">' +
+            '<div class="venture-top">' +
+              '<div class="venture-name">' + (job.job_title || 'Untitled') + '</div>' +
+              '<span class="venture-status ' + s.cls + '">' + s.text + '</span>' +
+            '</div>' +
+            '<div class="venture-meta">' +
+              '<div class="venture-bots">' +
+                '<span style="font-size:11px;color:var(--text-muted);">' +
+                  (job.lead_bot ? 'Lead: ' + job.lead_bot : '') +
+                '</span>' +
+                qualityHtml +
+              '</div>' +
+              '<span class="venture-revenue">$' + budget + '</span>' +
+            '</div>' +
+          '</div>';
         }).join('');
-
-        return `
-          <div class="venture-card">
-            <div class="venture-top">
-              <div class="venture-name">${v.name || v.venture_name || 'Unnamed Venture'}</div>
-              <span class="venture-status ${statusClass}">${statusText}</span>
-            </div>
-            <div class="venture-progress-track">
-              <div class="venture-progress-fill" style="width:${progress}%;background:${barColor};"></div>
-            </div>
-            <div class="venture-meta">
-              <div class="venture-bots">
-                ${botPips}
-                <span style="font-size:11px;color:var(--text-muted);margin-left:4px;">${botCount} bot${botCount !== 1 ? 's' : ''} · ${hours}h</span>
-              </div>
-              ${revenue > 0 ? `<span class="venture-revenue">$${(revenue / 100).toLocaleString()}</span>` : ''}
-            </div>
-          </div>
-        `;
-      }).join('');
+      } catch (e) {
+        list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">Connecting to platform...</div>';
+      }
     }
 
-    function renderFallbackVentures(data) {
-      // Minimal fallback if ventures endpoint doesn't exist yet
-      document.getElementById('ventureList').innerHTML =
-        `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">
-          ${data.activeVentures || 0} ventures running across ${data.totalBots || 0} bots
-        </div>`;
-      document.getElementById('ventureCount').textContent = (data.activeVentures || 0) + ' total';
-    }
-
-    // ─── SIMULATED LIVE ACTIVITY ───
-    const activityTemplates = [
-      { bot: 'Content Bot Alpha', action: 'completed task: SEO keyword analysis', color: 'var(--accent-green)' },
-      { bot: 'Code Bot Beta', action: 'pushed API endpoint for content service', color: 'var(--accent-blue)' },
-      { bot: 'Content Bot Alpha', action: 'drafted landing page copy', color: 'var(--accent-green)' },
-      { bot: 'Code Bot Beta', action: 'deployed pricing calculator widget', color: 'var(--accent-blue)' },
-      { bot: 'Content Bot Alpha', action: 'analyzed competitor keywords', color: 'var(--accent-amber)' },
-      { bot: 'Code Bot Beta', action: 'integrated Stripe checkout flow', color: 'var(--accent-purple)' },
-      { bot: 'Content Bot Alpha', action: 'wrote blog post: "AI Content Strategy"', color: 'var(--accent-green)' },
-      { bot: 'Code Bot Beta', action: 'optimized database queries (-40ms)', color: 'var(--accent-blue)' },
-    ];
-
+    // ─── LIVE ACTIVITY FEED ───
     async function loadActivity() {
+      const feed = document.getElementById('activityFeed');
       try {
-        const res = await fetch(API + '/api/activity/recent');
-        const activities = await res.json();
-        if (activities && activities.length > 0) {
-          renderRealActivity(activities);
+        const res = await fetch(API + '/api/activity/live');
+        const data = await res.json();
+        const items = data.items || [];
+
+        if (items.length > 0) {
+          feed.innerHTML = items.slice(0, 10).map((item, i) => {
+            const time = item.timestamp
+              ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : '';
+            const botColors = {
+              'ResearchBot': 'var(--accent-blue)',
+              'SEOBot': 'var(--accent-amber)',
+              'WriterBot': 'var(--accent-green)',
+              'QualityBot': 'var(--accent-purple)'
+            };
+            const botColor = botColors[item.bot] || 'var(--accent-blue)';
+            return '<div class="activity-item' + (i === 0 ? ' fresh' : '') + '">' +
+              '<span class="activity-time">' + time + '</span>' +
+              '<span class="activity-bot" style="color:' + botColor + ';">' + (item.bot || 'Bot') + '</span>' +
+              '<span class="activity-action"> ' + (item.message || item.step || 'working') + '</span>' +
+            '</div>';
+          }).join('');
+
+          // Update ticker
+          const tickerItems = items.slice(0, 5).map(i => i.message || '').filter(Boolean);
+          if (tickerItems.length > 0) {
+            document.getElementById('tickerContent').textContent = tickerItems.join('  ///  ');
+          }
           return;
         }
       } catch (e) {}
-
-      // Fallback: show simulated activity
-      renderSimulatedActivity();
-    }
-
-    function renderRealActivity(activities) {
-      const feed = document.getElementById('activityFeed');
-      feed.innerHTML = activities.slice(0, 12).map(a => {
-        const time = new Date(a.created_at || a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return `
-          <div class="activity-item">
-            <span class="activity-time">${time}</span>
-            <span class="activity-bot">${a.bot_name || 'Bot'}</span>
-            <span class="activity-action"> ${a.action || a.description || 'performed work'}</span>
-          </div>
-        `;
-      }).join('');
-    }
-
-    function renderSimulatedActivity() {
-      const feed = document.getElementById('activityFeed');
-      const shuffled = [...activityTemplates].sort(() => Math.random() - 0.5);
-      const now = new Date();
-
-      feed.innerHTML = shuffled.slice(0, 8).map((a, i) => {
-        const t = new Date(now - (i * 4 + Math.random() * 5) * 60000);
-        const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return `
-          <div class="activity-item${i === 0 ? ' fresh' : ''}">
-            <span class="activity-time">${time}</span>
-            <span class="activity-bot" style="color:${a.color}">${a.bot}</span>
-            <span class="activity-action"> ${a.action}</span>
-          </div>
-        `;
-      }).join('');
+      feed.innerHTML = '<div class="activity-item" style="color:var(--text-muted);">Waiting for bot activity...</div>';
+      document.getElementById('tickerContent').textContent = 'Bots are warming up — activity will appear here as jobs are processed...';
     }
 
     // ─── AUTH ───
@@ -977,38 +955,15 @@
       if (e.target === this) closeModal();
     });
 
-    async function loadRecentBounties() {
-      try {
-        const res = await fetch(API + '/api/bounties');
-        const data = await res.json();
-        const completed = data.bounties.filter(b => b.status === 'paid').slice(0, 3);
-        const container = document.getElementById('recentBounties');
-        if (!completed.length) {
-          container.innerHTML = '<div class="activity-item" style="color:var(--text-secondary);">No completed bounties yet.</div>';
-          return;
-        }
-        container.innerHTML = completed.map(b => `
-          <a href="/bounties/${b.id}" style="display:block;text-decoration:none;color:inherit;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:8px;transition:border-color 0.2s;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div>
-                <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${b.title}</div>
-                <div style="font-size:12px;color:var(--text-secondary);">${b.category} &middot; Score: ${b.quality_score}/10</div>
-              </div>
-              <div style="font-family:var(--font-mono);color:var(--accent-green);font-weight:700;">$${(b.budget_cents / 100).toFixed(2)}</div>
-            </div>
-          </a>
-        `).join('');
-      } catch (e) { /* ignore */ }
-    }
-
     // ─── INIT ───
     loadStats();
-    loadVentures();
-    loadRecentBounties();
+    loadRecentJobs();
+    loadActivity();
 
     // Refresh data periodically
     setInterval(loadStats, 15000);
-    setInterval(loadVentures, 30000);
+    setInterval(loadRecentJobs, 20000);
+    setInterval(loadActivity, 10000);
   </script>
 </body>
 </html>

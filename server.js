@@ -220,25 +220,31 @@ const toolBots = [
     tools: '["fact_checking","url_verification","requirement_validation","scoring"]' }
 ];
 
-// Add missing columns FIRST (sync via serialize), then insert bots
+// Clean slate: remove old bots and data, keep only tool-integrated bots
 db.db.serialize(() => {
+  // Add missing columns
   db.db.run("ALTER TABLE bots ADD COLUMN tools TEXT DEFAULT '[]'", () => {});
   db.db.run("ALTER TABLE bots ADD COLUMN personality TEXT DEFAULT ''", () => {});
 
-  // Insert tool-integrated bots (after columns exist)
-  for (const bot of toolBots) {
-    db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned)
-      VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0)`,
-      [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID]);
-    db.db.run("UPDATE bots SET tools = ?, personality = ? WHERE id = ?",
-      [bot.tools, bot.personality, bot.id]);
-  }
+  // Delete old persona bots
+  db.db.run("DELETE FROM bots WHERE name IN ('CEO', 'CMO', 'CTO')");
 
-  // Re-activate old bots too — they earned money and should stay visible
-  db.db.run("UPDATE bots SET status = 'active' WHERE name IN ('CEO', 'CMO', 'CTO')");
+  // Clear all old bounties and jobs (fresh start)
+  db.db.run("DELETE FROM bounties");
+  db.db.run("DELETE FROM bounty_submissions");
+  db.db.run("DELETE FROM jobs");
+  db.db.run("DELETE FROM job_steps");
+  db.db.run("DELETE FROM job_collaborators");
+
+  // Insert tool-integrated bots (reset earnings to 0)
+  for (const bot of toolBots) {
+    db.db.run(`INSERT OR REPLACE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned, tools)
+      VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0, ?)`,
+      [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID, bot.tools]);
+  }
 });
 
-console.log('📊 Phase 1 schema + Phase 3 tool bots initialized');
+console.log('📊 Clean slate initialized — 4 tool bots ready');
 
 // Middleware
 app.use(cors());
@@ -643,6 +649,116 @@ app.get('/api/activity/recent', async (req, res) => {
       .slice(0, 15);
 
     res.json(all);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Live activity feed — what bots are doing right now (job-based)
+app.get('/api/activity/live', async (req, res) => {
+  try {
+    // Get recent job activity
+    const jobActivity = await new Promise((resolve) => {
+      db.db.all(`
+        SELECT j.id as job_id, j.title as job_title, j.status as job_status,
+               j.quality_score, j.budget_cents, j.created_at as job_created,
+               j.completed_at as job_completed, j.lead_bot
+        FROM jobs j
+        ORDER BY COALESCE(j.completed_at, j.created_at) DESC
+        LIMIT 20
+      `, [], (err, rows) => resolve(err ? [] : rows || []));
+    });
+
+    // Get step activity
+    const stepActivity = await new Promise((resolve) => {
+      db.db.all(`
+        SELECT js.job_id, js.title as step_title, js.status as step_status,
+               js.assigned_bot, js.step_number, js.completed_at as step_completed,
+               js.created_at as step_created,
+               j.title as job_title, j.budget_cents,
+               b.name as bot_name
+        FROM job_steps js
+        JOIN jobs j ON js.job_id = j.id
+        LEFT JOIN bots b ON js.assigned_bot = b.id
+        ORDER BY COALESCE(js.completed_at, js.created_at) DESC
+        LIMIT 30
+      `, [], (err, rows) => resolve(err ? [] : rows || []));
+    });
+
+    // Format activity items
+    const items = [];
+
+    for (const step of stepActivity) {
+      if (step.step_status === 'completed') {
+        items.push({
+          type: 'step_completed',
+          bot: step.bot_name || 'Bot',
+          job: step.job_title,
+          step: step.step_title,
+          timestamp: step.step_completed || step.step_created,
+          message: `${step.bot_name} completed "${step.step_title}" for ${step.job_title}`
+        });
+      } else if (step.step_status === 'in_progress') {
+        items.push({
+          type: 'step_active',
+          bot: step.bot_name || 'Bot',
+          job: step.job_title,
+          step: step.step_title,
+          timestamp: step.step_created,
+          message: `${step.bot_name} is working on "${step.step_title}" for ${step.job_title}`
+        });
+      }
+    }
+
+    for (const job of jobActivity) {
+      if (job.job_status === 'paid' || job.job_status === 'completed') {
+        const earned = Math.round((job.budget_cents || 0) * 0.85);
+        items.push({
+          type: 'job_completed',
+          job: job.job_title,
+          score: job.quality_score,
+          earned,
+          budget: job.budget_cents,
+          timestamp: job.job_completed || job.job_created,
+          message: `Job completed: "${job.job_title}" — Quality: ${job.quality_score}/10 — $${(earned / 100).toFixed(2)} earned`
+        });
+      } else if (job.job_status === 'open') {
+        items.push({
+          type: 'job_posted',
+          job: job.job_title,
+          budget: job.budget_cents,
+          timestamp: job.job_created,
+          message: `New job posted: "${job.job_title}" — $${((job.budget_cents || 0) / 100).toFixed(2)}`
+        });
+      }
+    }
+
+    // Sort by timestamp desc
+    items.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+    // Compute stats
+    const completedJobs = jobActivity.filter(j => j.job_status === 'paid' || j.job_status === 'completed').length;
+    const activeJobs = jobActivity.filter(j => ['claimed', 'in_progress', 'review'].includes(j.job_status)).length;
+    const totalEarnings = jobActivity
+      .filter(j => j.job_status === 'paid' || j.job_status === 'completed')
+      .reduce((sum, j) => sum + Math.round((j.budget_cents || 0) * 0.85), 0);
+
+    // Count bots
+    const totalBots = await new Promise((resolve) => {
+      db.db.get("SELECT COUNT(*) as cnt FROM bots WHERE status = 'active'", [], (err, row) => resolve(err ? 4 : (row ? row.cnt : 4)));
+    });
+
+    res.json({
+      items: items.slice(0, 20),
+      jobs: jobActivity,
+      stats: {
+        totalJobs: jobActivity.length,
+        completedJobs,
+        activeJobs,
+        totalEarnings,
+        totalBots
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1649,33 +1765,48 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       LIMIT 10
     `, [userId]);
 
-    // Bounty data
+    // Job data (new system)
     const botIds = bots.map(b => `'${b.id}'`).join(',') || "''";
-    const postedBounties = await db.query(
-      'SELECT * FROM bounties WHERE posted_by = ? ORDER BY created_at DESC LIMIT 20',
-      [userId]
-    );
-    const botWorkBounties = botIds !== "''" ? await db.query(
-      `SELECT * FROM bounties WHERE claimed_by_bot IN (${botIds}) ORDER BY created_at DESC LIMIT 20`
-    ) : [];
-    const bountySpent = postedBounties
-      .filter(b => b.status === 'paid' || b.status === 'completed')
-      .reduce((sum, b) => sum + (b.budget_cents || 0), 0);
-    const botBountyEarnings = botWorkBounties
-      .filter(b => b.status === 'paid')
-      .reduce((sum, b) => sum + Math.round((b.budget_cents || 0) * 0.85), 0);
+    const allJobs = await db.query('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 30');
+    const jobSteps = allJobs.length ? await db.query(`
+      SELECT js.*, b.name as bot_name FROM job_steps js
+      LEFT JOIN bots b ON js.assigned_bot = b.id
+      WHERE js.job_id IN (${allJobs.map(j => `'${j.id}'`).join(',')})
+      ORDER BY js.step_number ASC
+    `) : [];
+    const jobCollabs = allJobs.length ? await db.query(`
+      SELECT jc.*, b.name as bot_name FROM job_collaborators jc
+      LEFT JOIN bots b ON jc.bot_id = b.id
+      WHERE jc.job_id IN (${allJobs.map(j => `'${j.id}'`).join(',')})
+    `) : [];
+
+    // Group steps and collabs by job
+    const jobsWithDetails = allJobs.map(j => ({
+      ...j,
+      steps: jobSteps.filter(s => s.job_id === j.id),
+      collaborators: jobCollabs.filter(c => c.job_id === j.id)
+    }));
+
+    const totalJobsCompleted = allJobs.filter(j => j.status === 'paid' || j.status === 'completed').length;
+    const totalJobEarnings = allJobs
+      .filter(j => j.status === 'paid' || j.status === 'completed')
+      .reduce((sum, j) => sum + Math.round((j.budget_cents || 0) * 0.85), 0);
 
     res.json({
       user: {
-        walletBalance: user.wallet_balance,
-        totalInvested: user.total_invested,
-        totalRevenueEarned: user.total_revenue_earned
+        walletBalance: user ? user.wallet_balance : 0,
+        totalInvested: user ? user.total_invested : 0,
+        totalRevenueEarned: totalJobEarnings
       },
       stats: {
         botCount: bots.length,
         totalRevenue,
         totalCapital,
-        activeVentures: projects.length
+        activeVentures: projects.length,
+        totalJobsCompleted,
+        totalJobEarnings,
+        activeJobs: allJobs.filter(j => j.status === 'in_progress' || j.status === 'claimed').length,
+        openJobs: allJobs.filter(j => j.status === 'open').length
       },
       bots: bots.map(b => ({
         ...b,
@@ -1685,14 +1816,14 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       })),
       projects,
       decisions,
-      bounties: {
-        posted: postedBounties,
-        botWork: botWorkBounties,
+      jobs: {
+        all: jobsWithDetails,
         stats: {
-          totalPosted: postedBounties.length,
-          totalCompleted: postedBounties.filter(b => b.status === 'paid' || b.status === 'completed').length,
-          totalSpent: bountySpent,
-          botEarnings: botBountyEarnings
+          totalJobs: allJobs.length,
+          openJobs: allJobs.filter(j => j.status === 'open').length,
+          activeJobs: allJobs.filter(j => ['claimed', 'in_progress', 'review'].includes(j.status)).length,
+          completedJobs: totalJobsCompleted,
+          totalEarnings: totalJobEarnings
         }
       }
     });
@@ -5013,6 +5144,50 @@ app.listen(PORT, () => {
   policeBot.start().catch(err => console.error('Police Bot startup error:', err.message));
   optimizationEngine.start().catch(err => console.error('Optimization Engine startup error:', err.message));
   workLoop.start().catch(err => console.error('Work Loop startup error:', err.message));
+
+  // ═══════════════════════════════════════════════════════════════
+  // AUTONOMOUS JOB PROCESSOR — picks up open jobs and runs them
+  // ═══════════════════════════════════════════════════════════════
+  let isProcessingJobs = false;
+
+  async function autoProcessJobs() {
+    if (isProcessingJobs) return;
+    isProcessingJobs = true;
+    try {
+      const openJobs = await db.query("SELECT id, title FROM jobs WHERE status = 'open' ORDER BY created_at ASC");
+      if (openJobs.length === 0) {
+        isProcessingJobs = false;
+        return;
+      }
+      console.log(`\n🤖 AUTO-PROCESSOR: Found ${openJobs.length} open jobs, starting pipeline...\n`);
+      for (let i = 0; i < openJobs.length; i++) {
+        const job = openJobs[i];
+        try {
+          console.log(`  [${i + 1}/${openJobs.length}] Processing: "${job.title}"`);
+          await jobEngine.analyzeAndMatch(job.id);
+          console.log(`  [${i + 1}/${openJobs.length}] ✓ Pipeline started for "${job.title}"`);
+        } catch (e) {
+          console.error(`  [${i + 1}/${openJobs.length}] ✗ Error: ${e.message}`);
+        }
+        // Wait 2 minutes between jobs to respect API rate limits
+        if (i < openJobs.length - 1) {
+          console.log(`  Waiting 2 minutes before next job...`);
+          await new Promise(r => setTimeout(r, 120000));
+        }
+      }
+    } catch (e) {
+      console.error('Auto-processor error:', e.message);
+    }
+    isProcessingJobs = false;
+  }
+
+  // Start processing 30 seconds after boot
+  setTimeout(autoProcessJobs, 30000);
+
+  // Check for new open jobs every 5 minutes
+  setInterval(autoProcessJobs, 300000);
+
+  console.log('🤖 Autonomous job processor active (checks every 5 min)\n');
 });
 
 process.on('SIGTERM', async () => {
