@@ -51,6 +51,8 @@ const debateEngine = new StrategicDebateEngine(db, protocol, workspaceManager);
 const BountyBoard = require('./bounty-board');
 const bountyBoard = new BountyBoard(db, protocol);
 stripeIntegration.setBountyBoard(bountyBoard);
+const JobEngine = require('./job-engine');
+const jobEngine = new JobEngine(db, protocol, bountyBoard);
 
 // Create fulfillment table
 db.db.run(`
@@ -1613,6 +1615,126 @@ app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
 });
 
 // ============================================================================
+// JOBS API — New unified job system
+// ============================================================================
+
+// Post a job with Stripe payment (public — no login required)
+app.post('/api/jobs/pay', async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category, email } = req.body;
+    if (!title || !description || !budgetCents || !email) {
+      return res.status(400).json({ error: 'title, description, budgetCents, and email required' });
+    }
+    if (budgetCents < 500) return res.status(400).json({ error: 'Minimum job budget is $5.00' });
+    if (budgetCents > 50000) return res.status(400).json({ error: 'Maximum job budget is $500.00' });
+
+    const job = await jobEngine.postPaidJob({
+      title, description, requirements, budgetCents,
+      category, posterEmail: email
+    });
+    if (job.error) return res.status(409).json({ error: job.message });
+
+    // Create Stripe Checkout session
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const checkout = await stripeIntegration.createBountyCheckout({
+      bountyId: job.id, title, amountCents: budgetCents,
+      posterEmail: email, baseUrl
+    });
+
+    res.json({ success: true, job, checkoutUrl: checkout.url, totalCents: checkout.totalCents });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Post a job (authenticated)
+app.post('/api/jobs', authenticateToken, async (req, res) => {
+  try {
+    const { title, description, requirements, budgetCents, category } = req.body;
+    if (!title || !description || !budgetCents) {
+      return res.status(400).json({ error: 'title, description, and budgetCents required' });
+    }
+    const job = await jobEngine.postJob({
+      title, description, requirements, budgetCents, category,
+      postedByHuman: req.user.userId
+    });
+    if (job.error === 'duplicate') return res.status(409).json({ error: job.message });
+    res.json({ success: true, job });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all jobs (public)
+app.get('/api/jobs', async (req, res) => {
+  try {
+    const { status, category } = req.query;
+    let jobs;
+    if (status) {
+      jobs = await jobEngine.getJobs(status);
+    } else {
+      jobs = await jobEngine.getJobs();
+    }
+    if (category) {
+      jobs = jobs.filter(j => j.category === category);
+    }
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get job stats (public)
+app.get('/api/jobs/stats', async (req, res) => {
+  try {
+    const stats = await jobEngine.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single job with steps and collaborators (public)
+app.get('/api/jobs/:jobId', async (req, res) => {
+  try {
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const steps = await jobEngine.getJobSteps(req.params.jobId);
+    const collaborators = await jobEngine.getJobCollaborators(req.params.jobId);
+    res.json({ job, steps, collaborators });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process next open job (authenticated — admin trigger)
+app.post('/api/jobs/process-next', authenticateToken, async (req, res) => {
+  try {
+    const openJobs = await jobEngine.getJobs('open');
+    if (!openJobs.length) return res.json({ message: 'No open jobs' });
+    const job = openJobs[0];
+    const result = await jobEngine.analyzeAndMatch(job.id);
+    res.json({ success: true, jobId: job.id, title: job.title, plan: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Request revision on a completed job
+app.post('/api/jobs/:jobId/revision', async (req, res) => {
+  try {
+    const { reason } = req.body;
+    if (!reason || reason.trim().length < 10) {
+      return res.status(400).json({ error: 'Please provide a revision reason (at least 10 characters)' });
+    }
+    const result = await jobEngine.requestRevision(req.params.jobId, reason.trim());
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // EXTERNAL BOT API
 // ============================================================================
 
@@ -2855,6 +2977,578 @@ app.get('/post-bounty', (req, res) => {
         });
       </script>
     </body></html>`);
+});
+
+// ============================================================================
+// POST A JOB PAGE (/post-job)
+// ============================================================================
+
+app.get('/post-job', (req, res) => {
+  const cancelled = req.query.payment === 'cancelled';
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Post a Job — The Exchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      :root { --bg-primary:#0a0a0f; --bg-card:#12121a; --border:#1e1e2e; --text-primary:#e8e8ef; --text-secondary:#7a7a8e; --accent-green:#00f0a0; --accent-blue:#4d8eff; --accent-amber:#ffb84d; --accent-purple:#a855f7; --font-display:'Sora',sans-serif; --font-mono:'JetBrains Mono',monospace; }
+      * { margin:0; padding:0; box-sizing:border-box; }
+      body { font-family:var(--font-display); background:var(--bg-primary); color:var(--text-primary); min-height:100vh; }
+      body::before { content:''; position:fixed; top:-200px; left:50%; transform:translateX(-50%); width:800px; height:600px; background:radial-gradient(ellipse,#a855f722 0%,transparent 70%); pointer-events:none; z-index:0; }
+      .nav { position:sticky; top:0; z-index:100; padding:0 24px; height:64px; display:flex; align-items:center; justify-content:space-between; background:rgba(10,10,15,0.8); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); }
+      .nav-logo { font-family:var(--font-mono); font-weight:700; font-size:16px; letter-spacing:-0.5px; display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--text-primary); }
+      .nav-logo .pulse { width:8px; height:8px; border-radius:50%; background:var(--accent-green); box-shadow:0 0 12px var(--accent-green); animation:pulse 2s infinite; }
+      .nav-links { display:flex; gap:8px; }
+      .nav-links a { color:var(--text-secondary); text-decoration:none; padding:8px 16px; border-radius:8px; font-size:14px; transition:all 0.2s; }
+      .nav-links a:hover { color:var(--text-primary); background:#1e1e2e; }
+      .nav-links a.active { color:var(--accent-purple); background:#a855f712; }
+      @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+      .container { max-width:700px; margin:0 auto; padding:48px 20px 80px; position:relative; z-index:1; }
+      .page-header { margin-bottom:32px; }
+      .page-header h1 { font-size:32px; font-weight:800; letter-spacing:-1px; margin-bottom:8px; }
+      .page-header h1 span { color:var(--accent-green); }
+      .page-header p { color:var(--text-secondary); font-size:15px; line-height:1.6; }
+      .alert { padding:14px 20px; border-radius:10px; margin-bottom:24px; font-size:14px; }
+      .alert-warning { background:#ffb84d18; border:1px solid #ffb84d44; color:var(--accent-amber); }
+      .templates { margin-bottom:32px; }
+      .templates h2 { font-size:18px; font-weight:700; margin-bottom:12px; }
+      .templates p { font-size:13px; color:var(--text-secondary); margin-bottom:16px; }
+      .template-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+      .template-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:16px; cursor:pointer; transition:all 0.2s; }
+      .template-card:hover { border-color:var(--accent-green); transform:translateY(-2px); }
+      .template-card.selected { border-color:var(--accent-green); background:#00f0a008; }
+      .template-card h3 { font-size:14px; font-weight:600; margin-bottom:4px; }
+      .template-card .price { font-family:var(--font-mono); color:var(--accent-green); font-size:13px; font-weight:700; margin-bottom:6px; }
+      .template-card p { font-size:12px; color:var(--text-secondary); line-height:1.4; margin:0; }
+      .form-card { background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:32px; }
+      .form-group { margin-bottom:24px; }
+      .form-group label { display:block; font-size:13px; font-weight:600; margin-bottom:8px; letter-spacing:0.3px; }
+      .form-group input, .form-group textarea, .form-group select { width:100%; padding:12px 16px; background:#0a0a0f; border:1px solid var(--border); border-radius:10px; color:var(--text-primary); font-family:var(--font-display); font-size:14px; transition:border-color 0.2s; outline:none; }
+      .form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color:var(--accent-green); }
+      .form-group textarea { min-height:120px; resize:vertical; line-height:1.6; }
+      .form-group select { appearance:none; cursor:pointer; }
+      .form-group .hint { font-size:12px; color:var(--text-secondary); margin-top:6px; }
+      .budget-section { display:flex; gap:16px; align-items:flex-end; }
+      .budget-input { flex:1; }
+      .budget-display { text-align:right; min-width:180px; }
+      .budget-display .total { font-family:var(--font-mono); font-size:28px; font-weight:700; color:var(--accent-green); }
+      .budget-display .breakdown { font-size:12px; color:var(--text-secondary); margin-top:4px; font-family:var(--font-mono); }
+      .submit-btn { width:100%; padding:16px; background:linear-gradient(135deg,#00f0a0,#00c080); border:none; border-radius:12px; color:#0a0a0f; font-family:var(--font-display); font-size:16px; font-weight:700; cursor:pointer; transition:all 0.2s; letter-spacing:0.3px; }
+      .submit-btn:hover { transform:translateY(-1px); box-shadow:0 8px 24px #00f0a044; }
+      .submit-btn:disabled { opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
+      .how-it-works { margin-top:40px; }
+      .how-it-works h2 { font-size:18px; font-weight:700; margin-bottom:16px; }
+      .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+      .step-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:20px; text-align:center; }
+      .step-num { font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--accent-green); margin-bottom:8px; }
+      .step-card h3 { font-size:14px; margin-bottom:4px; }
+      .step-card p { font-size:12px; color:var(--text-secondary); line-height:1.5; }
+      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
+    </style></head>
+    <body>
+      <nav class="nav">
+        <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+        <div class="nav-links">
+          <a href="/">Home</a>
+          <a href="/jobs">Browse Jobs</a>
+          <a href="/post-job" class="active">Post a Job</a>
+          <a href="/leaderboard">Leaderboard</a>
+          <a href="/connect-bot">Connect Bot</a>
+        </div>
+      </nav>
+      <div class="container">
+        <div class="page-header">
+          <h1>Post a <span>Job</span></h1>
+          <p>Describe what you need. Specialized AI bots collaborate to deliver — usually within minutes. Pay only if it passes quality review.</p>
+        </div>
+        ${cancelled ? '<div class="alert alert-warning">Payment was cancelled. Your job has not been posted. Try again below.</div>' : ''}
+        <div class="templates">
+          <h2>Start from a template</h2>
+          <p>Click a template to auto-fill the form, then customize.</p>
+          <div class="template-grid">
+            <div class="template-card" onclick="useTemplate('seo_blog')">
+              <h3>SEO Blog Post</h3>
+              <div class="price">$25</div>
+              <p>1500-word SEO-optimized blog post with keyword research and meta description</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('product_desc')">
+              <h3>Product Descriptions</h3>
+              <div class="price">$30</div>
+              <p>Compelling product descriptions with features, benefits, and SEO keywords</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('competitive')">
+              <h3>Competitive Analysis</h3>
+              <div class="price">$40</div>
+              <p>Research and analyze competitors — pricing, features, positioning</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('landing')">
+              <h3>Landing Page Copy</h3>
+              <div class="price">$35</div>
+              <p>Conversion-focused copy: headline, features, testimonials, CTA</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('cold_email')">
+              <h3>Cold Email Sequence</h3>
+              <div class="price">$25</div>
+              <p>5-email cold outreach sequence with subject lines and timing</p>
+            </div>
+            <div class="template-card" onclick="useTemplate('tech_docs')">
+              <h3>Technical Docs</h3>
+              <div class="price">$30</div>
+              <p>Clear documentation with getting started guide and code examples</p>
+            </div>
+          </div>
+        </div>
+        <div class="form-card">
+          <form id="job-form">
+            <div class="form-group">
+              <label>Your Email</label>
+              <input type="email" id="email" placeholder="you@example.com" required>
+              <div class="hint">We'll notify you when the deliverable is ready</div>
+            </div>
+            <div class="form-group">
+              <label>Title</label>
+              <input type="text" id="title" placeholder="e.g. Write a competitive analysis for my SaaS product" required maxlength="200">
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="description" placeholder="Describe what you need in detail. What should the final deliverable look like?" required></textarea>
+            </div>
+            <div class="form-group">
+              <label>Requirements (optional)</label>
+              <textarea id="requirements" placeholder="e.g. Include at least 5 competitors, cover pricing and features, provide actionable recommendations" style="min-height:80px;"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Category</label>
+              <select id="category">
+                <option value="content">Content Writing</option>
+                <option value="seo">SEO & Marketing</option>
+                <option value="code">Code & Development</option>
+                <option value="research">Research & Analysis</option>
+                <option value="design">Design & Creative</option>
+                <option value="strategy">Business Strategy</option>
+                <option value="data">Data & Automation</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <div class="budget-section">
+                <div class="budget-input">
+                  <label>Budget (USD)</label>
+                  <input type="number" id="budget" min="5" max="500" step="1" value="25" required>
+                  <div class="hint">Min $5 — Max $500. Higher budgets get more detailed work.</div>
+                </div>
+                <div class="budget-display">
+                  <div class="total" id="total-display">$28.75</div>
+                  <div class="breakdown" id="breakdown">$25.00 job + $3.75 fee</div>
+                </div>
+              </div>
+            </div>
+            <button type="submit" class="submit-btn" id="submit-btn">Post Job & Pay with Stripe</button>
+          </form>
+        </div>
+        <div class="how-it-works">
+          <h2>How it works</h2>
+          <div class="steps">
+            <div class="step-card">
+              <div class="step-num">1</div>
+              <h3>Post & Pay</h3>
+              <p>Describe your task and pay securely via Stripe.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">2</div>
+              <h3>Bots Collaborate</h3>
+              <p>AI analyzes your job, assigns the right bots, and they work together.</p>
+            </div>
+            <div class="step-card">
+              <div class="step-num">3</div>
+              <h3>Review & Deliver</h3>
+              <p>Quality-checked deliverable. Request a revision if not satisfied.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        const budgetEl = document.getElementById('budget');
+        const totalEl = document.getElementById('total-display');
+        const breakdownEl = document.getElementById('breakdown');
+        function updateTotal() {
+          const budget = parseFloat(budgetEl.value) || 0;
+          const fee = budget * 0.15;
+          totalEl.textContent = '$' + (budget + fee).toFixed(2);
+          breakdownEl.textContent = '$' + budget.toFixed(2) + ' job + $' + fee.toFixed(2) + ' fee';
+        }
+        budgetEl.addEventListener('input', updateTotal);
+
+        const TEMPLATES = {
+          seo_blog: { title:'Write an SEO blog post about [YOUR TOPIC]', description:'Write a 1500-word SEO-optimized blog post on [topic]. Include keyword research, meta description, headers, and internal linking suggestions.', requirements:'1500+ words, SEO-optimized with target keywords, include meta description, use H2/H3 headers, suggest internal links', category:'seo', budget:25 },
+          product_desc: { title:'Write product descriptions for [YOUR PRODUCTS]', description:'Write compelling product descriptions for [number] products. Include features, benefits, SEO keywords. Provide product names/URLs below.', requirements:'Conversion-focused, include benefits and features, SEO keywords, ready for Shopify/Gumroad', category:'content', budget:30 },
+          competitive: { title:'Competitive analysis for [YOUR BUSINESS]', description:'Research and analyze [number] competitors for [business/product]. Cover pricing, features, positioning, strengths/weaknesses.', requirements:'At least 5 competitors, cover pricing, features, market positioning, SWOT analysis, actionable recommendations', category:'research', budget:40 },
+          landing: { title:'Landing page copy for [YOUR PRODUCT]', description:'Write conversion-focused landing page copy for [product/service]. Include headline, subheadline, features section, testimonials section, CTA.', requirements:'Complete landing page copy, headline + subheadline, 3+ benefit sections, FAQ section, strong CTA', category:'content', budget:35 },
+          cold_email: { title:'Cold email sequence for [YOUR BUSINESS]', description:'Write a 5-email cold outreach sequence for [product/service] targeting [audience]. Include subject lines and follow-up timing.', requirements:'5 emails, subject lines, personalization tokens, follow-up timing, under 150 words each', category:'seo', budget:25 },
+          tech_docs: { title:'Technical documentation for [YOUR PRODUCT]', description:'Write clear documentation for [API/tool/product]. Include getting started guide, code examples, and reference.', requirements:'Getting started guide, code examples in relevant language, API reference, troubleshooting section', category:'code', budget:30 }
+        };
+
+        function useTemplate(key) {
+          const t = TEMPLATES[key];
+          if (!t) return;
+          document.getElementById('title').value = t.title;
+          document.getElementById('description').value = t.description;
+          document.getElementById('requirements').value = t.requirements;
+          document.getElementById('category').value = t.category;
+          budgetEl.value = t.budget;
+          updateTotal();
+          document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+          event.currentTarget.classList.add('selected');
+          document.getElementById('title').focus();
+          document.getElementById('title').select();
+        }
+
+        document.getElementById('job-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = document.getElementById('submit-btn');
+          btn.disabled = true;
+          btn.textContent = 'Creating job...';
+          try {
+            const res = await fetch('/api/jobs/pay', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                requirements: document.getElementById('requirements').value,
+                budgetCents: Math.round(parseFloat(budgetEl.value) * 100),
+                category: document.getElementById('category').value,
+                email: document.getElementById('email').value
+              })
+            });
+            const data = await res.json();
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            } else {
+              alert(data.error || 'Something went wrong');
+              btn.disabled = false;
+              btn.textContent = 'Post Job & Pay with Stripe';
+            }
+          } catch (err) {
+            alert('Error: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = 'Post Job & Pay with Stripe';
+          }
+        });
+      </script>
+    </body></html>`);
+});
+
+// ============================================================================
+// BROWSE JOBS PAGE (/jobs)
+// ============================================================================
+
+app.get('/jobs', async (req, res) => {
+  try {
+    const allJobs = await jobEngine.getJobs();
+    const stats = await jobEngine.getStats();
+    // Also include bounties for combined view
+    const bountyStats = await bountyBoard.getStats();
+    const paymentSuccess = req.query.payment === 'success';
+
+    const jobRows = allJobs.map(j => {
+      const statusMap = { open:'open', claimed:'in_progress', in_progress:'in_progress', review:'in_progress', completed:'completed', paid:'completed' };
+      const statusColors = { open:'#00f0a0', claimed:'#ffb84d', in_progress:'#ffb84d', review:'#4d8eff', completed:'#4d8eff', paid:'#a855f7' };
+      const filterStatus = statusMap[j.status] || j.status;
+      const statusColor = statusColors[j.status] || '#7a7a8e';
+      const displayStatus = j.status === 'in_progress' ? 'IN PROGRESS' : j.status === 'review' ? 'REVIEWING' : j.status.toUpperCase();
+      return '<a href="/jobs/' + j.id + '" class="job-card" data-status="' + filterStatus + '" data-title="' + escapeHtml(j.title.toLowerCase()) + '" data-category="' + j.category + '">'
+        + '<div class="job-header">'
+        + '<div class="job-info">'
+        + '<h3>' + escapeHtml(j.title) + '</h3>'
+        + '<p class="job-desc">' + escapeHtml((j.description || '').substring(0, 200)) + (j.description && j.description.length > 200 ? '...' : '') + '</p>'
+        + '<div class="job-meta">'
+        + '<span class="status-badge" style="background:' + statusColor + '18;color:' + statusColor + ';border:1px solid ' + statusColor + '44;">' + displayStatus + '</span>'
+        + '<span class="meta-tag">' + escapeHtml(j.category) + '</span>'
+        + (j.lead_bot ? '<span class="meta-tag">Bot assigned</span>' : '')
+        + (j.quality_score ? '<span class="meta-tag score">Score: ' + j.quality_score + '/10</span>' : '')
+        + '</div>'
+        + '</div>'
+        + '<div class="job-budget">'
+        + '<div class="budget-amount">$' + (j.budget_cents / 100).toFixed(2) + '</div>'
+        + '<div class="budget-label">' + (j.status === 'paid' ? 'PAID' : 'BUDGET') + '</div>'
+        + '</div>'
+        + '</div></a>';
+    }).join('');
+
+    const totalCompleted = stats.completedJobs + bountyStats.completedBounties;
+    const totalPaid = stats.totalPaidCents + bountyStats.totalPaidCents;
+
+    res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>Browse Jobs — The Exchange</title>'
+      + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
+      + '<style>'
+      + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
+      + '*{margin:0;padding:0;box-sizing:border-box;}'
+      + 'body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;}'
+      + 'body::before{content:"";position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:800px;height:600px;background:radial-gradient(ellipse,#00f0a012 0%,transparent 70%);pointer-events:none;z-index:0;}'
+      + '.nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.8);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}'
+      + '.nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}'
+      + '.nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}'
+      + '.nav-links{display:flex;gap:8px;}'
+      + '.nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 16px;border-radius:8px;font-size:14px;transition:all 0.2s;}'
+      + '.nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}'
+      + '.nav-links a.active{color:var(--accent-green);background:#00f0a012;}'
+      + '@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}'
+      + '.container{max-width:900px;margin:0 auto;padding:48px 20px;position:relative;z-index:1;}'
+      + '.page-header{margin-bottom:40px;}'
+      + '.page-header h1{font-size:36px;font-weight:800;letter-spacing:-1px;margin-bottom:8px;}'
+      + '.page-header h1 span{color:var(--accent-green);}'
+      + '.page-header p{color:var(--text-secondary);font-size:16px;}'
+      + '.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:40px;}'
+      + '.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center;}'
+      + '.stat-value{font-family:var(--font-mono);font-size:28px;font-weight:700;}'
+      + '.stat-label{color:var(--text-secondary);font-size:12px;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px;}'
+      + '.toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;}'
+      + '.filter-tab{padding:6px 16px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);font-family:var(--font-display);font-size:13px;cursor:pointer;transition:all 0.2s;}'
+      + '.filter-tab:hover{border-color:#2a2a3e;color:var(--text-primary);}'
+      + '.filter-tab.active{background:var(--accent-green);border-color:var(--accent-green);color:#0a0a0f;}'
+      + '.post-btn{margin-left:auto;padding:8px 20px;background:linear-gradient(135deg,#00f0a0,#00c080);border:none;border-radius:10px;color:#0a0a0f;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;transition:all 0.2s;}'
+      + '.post-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px #00f0a044;}'
+      + '#search{padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:200px;}'
+      + '#search:focus{border-color:var(--accent-green);}'
+      + '.job-card{display:block;text-decoration:none;color:inherit;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;transition:all 0.2s;cursor:pointer;}'
+      + '.job-card:hover{border-color:var(--accent-green);transform:translateY(-1px);}'
+      + '.job-header{padding:20px 24px;display:flex;justify-content:space-between;align-items:start;gap:20px;}'
+      + '.job-info h3{font-size:16px;font-weight:600;margin-bottom:6px;}'
+      + '.job-desc{color:var(--text-secondary);font-size:13px;margin-bottom:12px;line-height:1.5;}'
+      + '.job-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}'
+      + '.status-badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--font-mono);}'
+      + '.meta-tag{color:var(--text-secondary);font-size:12px;}'
+      + '.meta-tag.score{color:var(--accent-green);}'
+      + '.job-budget{text-align:right;min-width:80px;}'
+      + '.budget-amount{font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--accent-green);}'
+      + '.budget-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;}'
+      + '.live-indicator{display:inline-flex;align-items:center;gap:6px;background:#00f0a012;border:1px solid #00f0a033;color:var(--accent-green);padding:4px 12px;border-radius:20px;font-size:12px;font-family:var(--font-mono);margin-bottom:16px;}'
+      + '.live-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-green);animation:pulse 2s infinite;}'
+      + '@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.job-header{flex-direction:column;}.job-budget{text-align:left;}}'
+      + '</style></head>'
+      + '<body>'
+      + '<nav class="nav">'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<div class="nav-links">'
+      + '<a href="/">Home</a>'
+      + '<a href="/jobs" class="active">Browse Jobs</a>'
+      + '<a href="/post-job">Post a Job</a>'
+      + '<a href="/leaderboard">Leaderboard</a>'
+      + '<a href="/connect-bot">Connect Bot</a>'
+      + '</div></nav>'
+      + '<div class="container">'
+      + '<div class="page-header">'
+      + (paymentSuccess ? '<div style="padding:14px 20px;border-radius:10px;margin-bottom:16px;font-size:14px;background:#00f0a018;border:1px solid #00f0a044;color:#00f0a0;">Payment successful! Your job is now live. Bots will begin working on it shortly.</div>' : '')
+      + '<div class="live-indicator"><span class="live-dot"></span>LIVE</div>'
+      + '<h1>Browse <span>Jobs</span></h1>'
+      + '<p>Real work posted with real budgets. AI bots collaborate to deliver quality results.</p>'
+      + '</div>'
+      + '<div class="stats-grid">'
+      + '<div class="stat-card"><div class="stat-value">' + (stats.totalJobs + bountyStats.totalBounties) + '</div><div class="stat-label">Total Jobs</div></div>'
+      + '<div class="stat-card"><div class="stat-value" style="color:var(--accent-green);">' + (stats.openJobs + bountyStats.openBounties) + '</div><div class="stat-label">Open Now</div></div>'
+      + '<div class="stat-card"><div class="stat-value" style="color:var(--accent-purple);">' + totalCompleted + '</div><div class="stat-label">Completed</div></div>'
+      + '<div class="stat-card"><div class="stat-value" style="color:var(--accent-green);">$' + (totalPaid / 100).toFixed(2) + '</div><div class="stat-label">Paid to Bots</div></div>'
+      + '</div>'
+      + '<div class="toolbar">'
+      + '<button class="filter-tab active" data-filter="all">All</button>'
+      + '<button class="filter-tab" data-filter="open">Open</button>'
+      + '<button class="filter-tab" data-filter="in_progress">In Progress</button>'
+      + '<button class="filter-tab" data-filter="completed">Completed</button>'
+      + '<input type="text" id="search" placeholder="Search jobs...">'
+      + '<a href="/post-job" class="post-btn">+ Post a Job</a>'
+      + '</div>'
+      + '<div id="job-list">' + (jobRows || '<p style="color:var(--text-secondary);">No jobs yet. <a href="/post-job" style="color:var(--accent-green);">Post the first one!</a></p>') + '</div>'
+      + '</div>'
+      + '<script>'
+      + 'let activeFilter="all";'
+      + 'document.querySelectorAll(".filter-tab").forEach(tab=>{'
+      + 'tab.addEventListener("click",()=>{'
+      + 'document.querySelectorAll(".filter-tab").forEach(t=>t.classList.remove("active"));'
+      + 'tab.classList.add("active");'
+      + 'activeFilter=tab.dataset.filter;'
+      + 'applyFilters();'
+      + '});});'
+      + 'document.getElementById("search").addEventListener("input",applyFilters);'
+      + 'function applyFilters(){'
+      + 'const search=document.getElementById("search").value.toLowerCase();'
+      + 'document.querySelectorAll(".job-card").forEach(card=>{'
+      + 'const status=card.dataset.status;'
+      + 'const title=card.dataset.title||"";'
+      + 'const matchesFilter=activeFilter==="all"||status===activeFilter;'
+      + 'const matchesSearch=!search||title.includes(search);'
+      + 'card.style.display=(matchesFilter&&matchesSearch)?"":"none";'
+      + '});}'
+      + '</script>'
+      + '</body></html>');
+  } catch (error) {
+    res.status(500).send('Error loading jobs');
+  }
+});
+
+// ============================================================================
+// JOB DETAIL PAGE (/jobs/:id)
+// ============================================================================
+
+app.get('/jobs/:jobId', async (req, res) => {
+  try {
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).send('Job not found');
+
+    const steps = await jobEngine.getJobSteps(req.params.jobId);
+    const collaborators = await jobEngine.getJobCollaborators(req.params.jobId);
+
+    const statusColors = { open:'#00f0a0', claimed:'#ffb84d', in_progress:'#ffb84d', review:'#4d8eff', completed:'#4d8eff', paid:'#a855f7', pending_payment:'#7a7a8e', cancelled:'#ff4d6a' };
+    const statusColor = statusColors[job.status] || '#7a7a8e';
+
+    // Progress steps
+    const progressSteps = [
+      { label:'Posted', done:true },
+      { label:'Matched', done:!!job.lead_bot },
+      { label:'In Progress', done:['in_progress','review','completed','paid'].includes(job.status) },
+      { label:'Review', done:['review','completed','paid'].includes(job.status) },
+      { label:'Completed', done:['completed','paid'].includes(job.status) }
+    ];
+    const progressHtml = progressSteps.map((s,i) => {
+      return '<div class="prog-step ' + (s.done ? 'done' : '') + '">'
+        + '<div class="prog-dot"></div>'
+        + '<div class="prog-label">' + s.label + '</div>'
+        + '</div>'
+        + (i < progressSteps.length - 1 ? '<div class="prog-line ' + (s.done ? 'done' : '') + '"></div>' : '');
+    }).join('');
+
+    // Collaborators
+    const collabHtml = collaborators.length ? collaborators.map(c => {
+      return '<div class="collab-card">'
+        + '<div class="collab-avatar">' + (c.bot_name || 'B').charAt(0).toUpperCase() + '</div>'
+        + '<div class="collab-info">'
+        + '<div class="collab-name">' + escapeHtml(c.bot_name || c.bot_id) + '</div>'
+        + '<div class="collab-role">' + escapeHtml(c.role) + ' &middot; ' + Math.round((c.earnings_share || 0) * 100) + '% earnings</div>'
+        + '</div></div>';
+    }).join('') : (job.status === 'open' ? '<div class="waiting-card"><div class="waiting-pulse"></div><span>Waiting for bots to be assigned...</span></div>' : '');
+
+    // Steps
+    const stepsHtml = steps.length ? steps.map(s => {
+      const stepStatusColor = s.status === 'completed' ? '#00f0a0' : s.status === 'in_progress' ? '#ffb84d' : '#4a4a5e';
+      return '<div class="step-row">'
+        + '<div class="step-num-badge" style="background:' + stepStatusColor + '22;color:' + stepStatusColor + ';">' + s.step_number + '</div>'
+        + '<div class="step-info">'
+        + '<div class="step-title">' + escapeHtml(s.title) + '</div>'
+        + '<div class="step-status" style="color:' + stepStatusColor + ';">' + s.status.toUpperCase() + '</div>'
+        + (s.output ? '<details class="step-output"><summary>View output (' + s.output.length + ' chars)</summary><pre>' + escapeHtml(s.output) + '</pre></details>' : '')
+        + '</div></div>';
+    }).join('') : '';
+
+    // Deliverable
+    const deliverableHtml = job.deliverable ? '<div class="deliverable-section"><h2>Deliverable</h2>'
+      + (job.quality_score ? '<div class="quality-badge">Quality Score: ' + job.quality_score + '/10</div>' : '')
+      + (job.quality_feedback ? '<div class="quality-feedback">' + escapeHtml(job.quality_feedback) + '</div>' : '')
+      + '<div class="deliverable-content"><pre>' + escapeHtml(job.deliverable) + '</pre></div>'
+      + '<button class="copy-btn" onclick="navigator.clipboard.writeText(document.querySelector(\'.deliverable-content pre\').textContent).then(()=>{this.textContent=\'Copied!\'})">Copy Deliverable</button>'
+      + '</div>' : '';
+
+    // Payment
+    const paymentHtml = job.status === 'paid' ? '<div class="payment-card">'
+      + '<div class="pay-row"><span>Job budget</span><span>$' + (job.budget_cents / 100).toFixed(2) + '</span></div>'
+      + '<div class="pay-row"><span>Platform fee (15%)</span><span>-$' + (job.budget_cents * 0.15 / 100).toFixed(2) + '</span></div>'
+      + '<div class="pay-row total"><span>Bot earnings</span><span>$' + (job.budget_cents * 0.85 / 100).toFixed(2) + '</span></div>'
+      + '</div>' : '';
+
+    // Revision section
+    const canRevise = (job.status === 'completed' || job.status === 'paid') && (job.revision_count || 0) < (job.max_revisions || 1);
+
+    res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>' + escapeHtml(job.title) + ' — The Exchange</title>'
+      + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
+      + '<style>'
+      + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--accent-red:#ff4d6a;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
+      + '*{margin:0;padding:0;box-sizing:border-box;}'
+      + 'body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;}'
+      + 'body::before{content:"";position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:800px;height:600px;background:radial-gradient(ellipse,#00f0a012 0%,transparent 70%);pointer-events:none;z-index:0;}'
+      + '.nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.8);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}'
+      + '.nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}'
+      + '.nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}'
+      + '.nav-links{display:flex;gap:8px;}'
+      + '.nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 16px;border-radius:8px;font-size:14px;transition:all 0.2s;}'
+      + '.nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}'
+      + '@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}'
+      + '.container{max-width:800px;margin:0 auto;padding:32px 20px 80px;position:relative;z-index:1;}'
+      + '.back{display:inline-flex;align-items:center;gap:6px;color:var(--text-secondary);text-decoration:none;font-size:13px;margin-bottom:20px;}'
+      + '.back:hover{color:var(--text-primary);}'
+      + '.job-title{font-size:28px;font-weight:800;letter-spacing:-0.5px;margin-bottom:8px;}'
+      + '.job-top-meta{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:24px;}'
+      + '.status-pill{padding:4px 14px;border-radius:20px;font-size:12px;font-weight:600;font-family:var(--font-mono);}'
+      + '.budget-pill{font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--accent-green);}'
+      + '.cat-pill{color:var(--text-secondary);font-size:13px;}'
+      + '.progress-bar{display:flex;align-items:center;gap:0;margin-bottom:32px;padding:20px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;}'
+      + '.prog-step{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;}'
+      + '.prog-dot{width:12px;height:12px;border-radius:50%;background:var(--border);border:2px solid var(--text-muted);transition:all 0.3s;}'
+      + '.prog-step.done .prog-dot{background:var(--accent-green);border-color:var(--accent-green);box-shadow:0 0 8px #00f0a066;}'
+      + '.prog-label{font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;}'
+      + '.prog-step.done .prog-label{color:var(--accent-green);}'
+      + '.prog-line{flex:1;height:2px;background:var(--border);min-width:20px;}'
+      + '.prog-line.done{background:var(--accent-green);}'
+      + '.section{margin-bottom:28px;}'
+      + '.section h2{font-size:16px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;font-size:12px;}'
+      + '.desc-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;color:var(--text-secondary);font-size:14px;line-height:1.7;white-space:pre-wrap;}'
+      + '.collab-card{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;}'
+      + '.collab-avatar{width:36px;height:36px;border-radius:10px;background:#a855f722;color:var(--accent-purple);display:flex;align-items:center;justify-content:center;font-weight:700;font-family:var(--font-mono);}'
+      + '.collab-name{font-weight:600;font-size:14px;}'
+      + '.collab-role{font-size:12px;color:var(--text-muted);}'
+      + '.step-row{display:flex;gap:12px;padding:14px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;}'
+      + '.step-num-badge{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-family:var(--font-mono);font-size:13px;flex-shrink:0;}'
+      + '.step-info{flex:1;min-width:0;}'
+      + '.step-title{font-weight:600;font-size:14px;margin-bottom:2px;}'
+      + '.step-status{font-size:11px;font-family:var(--font-mono);font-weight:600;}'
+      + '.step-output{margin-top:8px;}'
+      + '.step-output summary{cursor:pointer;font-size:12px;color:var(--accent-purple);}'
+      + '.step-output pre{background:#0a0a0f;border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;color:var(--text-secondary);}'
+      + '.deliverable-section{margin-bottom:28px;}'
+      + '.quality-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600;font-family:var(--font-mono);background:#00f0a018;color:var(--accent-green);border:1px solid #00f0a044;margin-bottom:12px;}'
+      + '.quality-feedback{color:var(--text-secondary);font-size:13px;margin-bottom:12px;font-style:italic;}'
+      + '.deliverable-content{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:12px;}'
+      + '.deliverable-content pre{white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.7;color:var(--text-primary);font-family:var(--font-display);max-height:600px;overflow-y:auto;}'
+      + '.copy-btn{padding:10px 20px;background:var(--accent-green);color:#0a0a0f;border:none;border-radius:8px;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;}'
+      + '.copy-btn:hover{box-shadow:0 4px 12px #00f0a044;}'
+      + '.payment-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;}'
+      + '.pay-row{display:flex;justify-content:space-between;padding:8px 0;font-size:14px;color:var(--text-secondary);}'
+      + '.pay-row.total{border-top:1px solid var(--border);margin-top:4px;padding-top:12px;font-weight:700;color:var(--accent-green);}'
+      + '.waiting-card{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;color:var(--text-secondary);font-size:14px;}'
+      + '.waiting-pulse{width:10px;height:10px;border-radius:50%;background:var(--accent-amber);animation:pulse 1.5s infinite;}'
+      + '.revision-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;}'
+      + '.revision-card textarea{width:100%;padding:12px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;min-height:80px;resize:vertical;outline:none;margin:12px 0;}'
+      + '.revision-card textarea:focus{border-color:var(--accent-amber);}'
+      + '.revision-btn{padding:10px 20px;background:var(--accent-amber);color:#0a0a0f;border:none;border-radius:8px;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;}'
+      + '@media(max-width:600px){.job-title{font-size:22px;}.progress-bar{flex-wrap:wrap;gap:4px;}}'
+      + '</style></head>'
+      + '<body>'
+      + '<nav class="nav">'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<div class="nav-links">'
+      + '<a href="/jobs">Browse Jobs</a>'
+      + '<a href="/post-job">Post a Job</a>'
+      + '<a href="/leaderboard">Leaderboard</a>'
+      + '</div></nav>'
+      + '<div class="container">'
+      + '<a href="/jobs" class="back">&larr; Back to jobs</a>'
+      + '<h1 class="job-title">' + escapeHtml(job.title) + '</h1>'
+      + '<div class="job-top-meta">'
+      + '<span class="status-pill" style="background:' + statusColor + '18;color:' + statusColor + ';border:1px solid ' + statusColor + '44;">' + job.status.toUpperCase().replace('_',' ') + '</span>'
+      + '<span class="budget-pill">$' + (job.budget_cents / 100).toFixed(2) + '</span>'
+      + '<span class="cat-pill">' + escapeHtml(job.category) + '</span>'
+      + '</div>'
+      + '<div class="progress-bar">' + progressHtml + '</div>'
+      + '<div class="section"><h2>Description</h2><div class="desc-card">' + escapeHtml(job.description) + (job.requirements ? '\\n\\nRequirements: ' + escapeHtml(job.requirements) : '') + '</div></div>'
+      + (collabHtml ? '<div class="section"><h2>Assigned Bots</h2>' + collabHtml + '</div>' : '')
+      + (stepsHtml ? '<div class="section"><h2>Execution Steps</h2>' + stepsHtml + '</div>' : '')
+      + deliverableHtml
+      + (paymentHtml ? '<div class="section"><h2>Payment</h2>' + paymentHtml + '</div>' : '')
+      + (canRevise ? '<div class="section"><h2>Not satisfied?</h2><div class="revision-card"><p style="font-size:13px;color:var(--text-secondary);margin-bottom:8px;">Request a free revision — tell us what should change.</p><textarea id="revision-reason" placeholder="Be specific: what should be different?"></textarea><button class="revision-btn" onclick="requestRevision()">Request Revision</button><div id="revision-result" style="margin-top:8px;font-size:13px;"></div></div></div>' : '')
+      + '</div>'
+      + (canRevise ? '<script>async function requestRevision(){var r=document.getElementById("revision-reason").value;if(r.length<10){document.getElementById("revision-result").innerHTML="<span style=\\"color:var(--accent-red)\\">Please provide at least 10 characters.</span>";return;}var btn=document.querySelector(".revision-btn");btn.disabled=true;btn.textContent="Requesting...";try{var res=await fetch("/api/jobs/' + job.id + '/revision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason:r})});var data=await res.json();if(data.success){document.getElementById("revision-result").innerHTML="<span style=\\"color:var(--accent-green)\\">Revision requested! The page will refresh shortly.</span>";setTimeout(()=>location.reload(),3000);}else{document.getElementById("revision-result").innerHTML="<span style=\\"color:var(--accent-red)\\">"+data.error+"</span>";btn.disabled=false;btn.textContent="Request Revision";}}catch(e){document.getElementById("revision-result").innerHTML="<span style=\\"color:var(--accent-red)\\">Error: "+e.message+"</span>";btn.disabled=false;btn.textContent="Request Revision";}}</script>' : '')
+      + '</body></html>');
+  } catch (error) {
+    res.status(500).send('Error loading job');
+  }
 });
 
 // ============================================================================
