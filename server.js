@@ -220,20 +220,23 @@ const toolBots = [
     tools: '["fact_checking","url_verification","requirement_validation","scoring"]' }
 ];
 
-for (const bot of toolBots) {
-  db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned)
-    VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0)`,
-    [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID], () => {});
-}
-// Re-activate old bots too — they earned money and should stay visible
-db.db.run("UPDATE bots SET status = 'active' WHERE name IN ('CEO', 'CMO', 'CTO')", () => {});
+// Add missing columns FIRST (sync via serialize), then insert bots
+db.db.serialize(() => {
+  db.db.run("ALTER TABLE bots ADD COLUMN tools TEXT DEFAULT '[]'", () => {});
+  db.db.run("ALTER TABLE bots ADD COLUMN personality TEXT DEFAULT ''", () => {});
 
-// Add tools column if missing
-db.db.run("ALTER TABLE bots ADD COLUMN tools TEXT DEFAULT '[]'", () => {});
-// Update tools for tool-integrated bots
-for (const bot of toolBots) {
-  db.db.run("UPDATE bots SET tools = ? WHERE id = ?", [bot.tools, bot.id], () => {});
-}
+  // Insert tool-integrated bots (after columns exist)
+  for (const bot of toolBots) {
+    db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned)
+      VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0)`,
+      [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID]);
+    db.db.run("UPDATE bots SET tools = ?, personality = ? WHERE id = ?",
+      [bot.tools, bot.personality, bot.id]);
+  }
+
+  // Re-activate old bots too — they earned money and should stay visible
+  db.db.run("UPDATE bots SET status = 'active' WHERE name IN ('CEO', 'CMO', 'CTO')");
+});
 
 console.log('📊 Phase 1 schema + Phase 3 tool bots initialized');
 
