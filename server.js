@@ -198,29 +198,41 @@ for (const col of jobsNewCols) {
 }
 
 // Phase 3: Register tool-integrated bots (ResearchBot, SEOBot, WriterBot, QualityBot)
-// Deactivate old persona bots, insert new ones
-db.db.run("UPDATE bots SET status = 'inactive' WHERE name IN ('CEO', 'CMO', 'CTO')", () => {});
+// These replace the old persona bots with real tool-integrated capabilities
+const ADMIN_USER_ID = '53e43ee2-9c58-4003-bf18-1c314355094f';
 
 const toolBots = [
-  ['research-bot', 'ResearchBot',
-    '["web_scraping","data_extraction","competitive_analysis","market_research","shopify_scraping"]',
-    'Web scraping and data extraction specialist. Fetches live web pages, parses HTML, extracts structured data from Shopify stores, and compiles multi-source research briefs.',
-    '["web_fetch","html_parser","shopify_products_json"]'],
-  ['seo-bot', 'SEOBot',
-    '["seo","keyword_research","content_optimization","serp_analysis","site_audit"]',
-    'SEO analyst that provides keyword strategies, audits existing pages using real scraped data, and creates optimization plans for product listings and content.',
-    '["keyword_analysis","seo_audit","content_scoring"]'],
-  ['writer-bot', 'WriterBot',
-    '["copywriting","blog_writing","product_descriptions","landing_pages","email_sequences"]',
-    'Content writer that produces polished, SEO-optimized content grounded in real research and SEO data rather than generic output.',
-    '["content_generation","seo_writing"]'],
-  ['quality-bot', 'QualityBot',
-    '["quality_assurance","fact_checking","content_review","scoring"]',
-    'Reviews deliverables on 5 dimensions: completeness, accuracy, quality, SEO, value. Uses Sonnet for better judgment. Fact-checks URLs found in deliverables.',
-    '["fact_checking","url_verification","requirement_validation","scoring"]']
+  { id: 'research-bot', name: 'ResearchBot',
+    skills: '["web_scraping","data_extraction","competitive_analysis","market_research","shopify_scraping"]',
+    personality: 'Web scraping and data extraction specialist. Fetches live web pages, parses HTML, extracts structured data from Shopify stores, and compiles multi-source research briefs.',
+    tools: '["web_fetch","html_parser","shopify_products_json"]' },
+  { id: 'seo-bot', name: 'SEOBot',
+    skills: '["seo","keyword_research","content_optimization","serp_analysis","site_audit"]',
+    personality: 'SEO analyst that provides keyword strategies, audits existing pages using real scraped data, and creates optimization plans for product listings and content.',
+    tools: '["keyword_analysis","seo_audit","content_scoring"]' },
+  { id: 'writer-bot', name: 'WriterBot',
+    skills: '["copywriting","blog_writing","product_descriptions","landing_pages","email_sequences"]',
+    personality: 'Content writer that produces polished, SEO-optimized content grounded in real research and SEO data rather than generic output.',
+    tools: '["content_generation","seo_writing"]' },
+  { id: 'quality-bot', name: 'QualityBot',
+    skills: '["quality_assurance","fact_checking","content_review","scoring"]',
+    personality: 'Reviews deliverables on 5 dimensions: completeness, accuracy, quality, SEO, value. Uses Sonnet for better judgment. Fact-checks URLs found in deliverables.',
+    tools: '["fact_checking","url_verification","requirement_validation","scoring"]' }
 ];
-for (const [id, name, skills, personality, tools] of toolBots) {
-  db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, status, balance) VALUES (?, ?, ?, ?, 'active', 0)`, [id, name, skills, personality], () => {});
+
+for (const bot of toolBots) {
+  db.db.run(`INSERT OR IGNORE INTO bots (id, name, skills, personality, ai_provider, human_owner_id, status, capital_balance, total_earned)
+    VALUES (?, ?, ?, ?, 'claude', ?, 'active', 0, 0)`,
+    [bot.id, bot.name, bot.skills, bot.personality, ADMIN_USER_ID], () => {});
+}
+// Re-activate old bots too — they earned money and should stay visible
+db.db.run("UPDATE bots SET status = 'active' WHERE name IN ('CEO', 'CMO', 'CTO')", () => {});
+
+// Add tools column if missing
+db.db.run("ALTER TABLE bots ADD COLUMN tools TEXT DEFAULT '[]'", () => {});
+// Update tools for tool-integrated bots
+for (const bot of toolBots) {
+  db.db.run("UPDATE bots SET tools = ? WHERE id = ?", [bot.tools, bot.id], () => {});
 }
 
 console.log('📊 Phase 1 schema + Phase 3 tool bots initialized');
@@ -1664,8 +1676,9 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       },
       bots: bots.map(b => ({
         ...b,
-        skills: JSON.parse(b.skills),
-        preferences: b.preferences ? JSON.parse(b.preferences) : {}
+        skills: (() => { try { return JSON.parse(b.skills); } catch(e) { return []; } })(),
+        tools: (() => { try { return JSON.parse(b.tools || '[]'); } catch(e) { return []; } })(),
+        preferences: b.preferences ? (() => { try { return JSON.parse(b.preferences); } catch(e) { return {}; } })() : {}
       })),
       projects,
       decisions,

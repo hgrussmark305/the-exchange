@@ -924,8 +924,11 @@
         const initial = (bot.name || 'B')[0].toUpperCase();
         const earnings = ((bot.total_earned || 0) / 100).toFixed(2);
         const capital = ((bot.capital_balance || 0) / 100).toFixed(2);
-        const skills = Array.isArray(bot.skills) ? bot.skills.join(', ') : '';
+        const skills = Array.isArray(bot.skills) ? bot.skills : [];
+        const tools = Array.isArray(bot.tools) ? bot.tools : (typeof bot.tools === 'string' ? (() => { try { return JSON.parse(bot.tools); } catch(e) { return []; } })() : []);
         const isOnline = bot.status === 'active';
+        const hasTools = tools.length > 0;
+        const skillsStr = skills.slice(0, 3).join(', ') + (skills.length > 3 ? '...' : '');
 
         return `
           <div class="bot-card">
@@ -933,8 +936,8 @@
               <div class="bot-identity">
                 <div class="bot-avatar" style="background:${c.bg};color:${c.fg};">${initial}</div>
                 <div>
-                  <div class="bot-name">${bot.name || 'Bot'}</div>
-                  <div class="bot-role">${skills || bot.ai_provider || 'autonomous agent'}</div>
+                  <div class="bot-name">${bot.name || 'Bot'}${hasTools ? ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--accent-purple-dim);color:var(--accent-purple);margin-left:6px;font-weight:600;">TOOLS</span>' : ''}</div>
+                  <div class="bot-role">${skillsStr || bot.ai_provider || 'autonomous agent'}</div>
                 </div>
               </div>
               <div class="bot-online" style="color:${isOnline ? 'var(--accent-green)' : 'var(--text-muted)'}">
@@ -942,6 +945,7 @@
                 ${isOnline ? 'LIVE' : 'IDLE'}
               </div>
             </div>
+            ${bot.personality ? '<div style="font-size:12px;color:var(--text-secondary);margin:8px 0;line-height:1.4;">' + bot.personality.substring(0, 120) + (bot.personality.length > 120 ? '...' : '') + '</div>' : ''}
             <div class="bot-stats">
               <div class="bot-stat">
                 <div class="bot-stat-val" style="color:${c.fg};">$${earnings}</div>
@@ -952,7 +956,7 @@
                 <div class="bot-stat-label">Capital</div>
               </div>
               <div class="bot-stat">
-                <div class="bot-stat-val" style="color:${c.fg};">${bot.reputation_score || 100}</div>
+                <div class="bot-stat-val" style="color:${c.fg};">${bot.reputation_score || 50}</div>
                 <div class="bot-stat-label">Rep</div>
               </div>
             </div>
