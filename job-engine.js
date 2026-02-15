@@ -9,7 +9,12 @@ class JobEngine {
     this.db = db;
     this.protocol = protocol;
     this.bountyBoard = bountyBoard; // for accessing internal/external bots
+    this.stripeIntegration = null;
     this.client = new Anthropic();
+  }
+
+  setStripeIntegration(stripeIntegration) {
+    this.stripeIntegration = stripeIntegration;
   }
 
   // ============================================================================
@@ -359,20 +364,34 @@ Score 6+ passes. Be fair and practical — judge on completeness, relevance to r
       await this.processPayment(jobId);
     } else {
       const revisionCount = job.revision_count || 0;
-      if (revisionCount < (job.max_revisions || 1)) {
-        console.log(`   ❌ Job REJECTED (${review.score}/10): ${review.feedback} — retrying`);
+      if (revisionCount < (job.max_revisions || 3)) {
+        console.log(`   ❌ Job REJECTED (${review.score}/10): ${review.feedback} — retrying (attempt ${revisionCount + 1}/${job.max_revisions || 3})`);
         await this.db.query(
           "UPDATE jobs SET status = 'open', lead_bot = NULL, claimed_at = NULL, revision_count = ? WHERE id = ?",
           [revisionCount + 1, jobId]
         );
       } else {
-        // Auto-approve after max retries
-        console.log(`   ⚡ Auto-approving after ${revisionCount + 1} attempts`);
-        await this.db.query(
-          "UPDATE jobs SET status = 'completed', completed_at = ? WHERE id = ?",
-          [Date.now(), jobId]
-        );
-        await this.processPayment(jobId);
+        // Auto-refund after max retries if Stripe payment exists
+        if (job.stripe_payment_intent && this.stripeIntegration) {
+          console.log(`   💸 Auto-refunding after ${revisionCount + 1} failed attempts`);
+          try {
+            await this.stripeIntegration.handleJobRefund(jobId);
+          } catch (refundErr) {
+            console.error(`   Refund error: ${refundErr.message}`);
+            // Mark as failed even if refund fails
+            await this.db.query(
+              "UPDATE jobs SET status = 'failed' WHERE id = ?",
+              [jobId]
+            );
+          }
+        } else {
+          // No Stripe payment (free/authenticated job) — just mark failed
+          console.log(`   ❌ Job failed after ${revisionCount + 1} attempts`);
+          await this.db.query(
+            "UPDATE jobs SET status = 'failed' WHERE id = ?",
+            [jobId]
+          );
+        }
       }
     }
 

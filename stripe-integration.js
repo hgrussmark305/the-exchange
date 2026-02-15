@@ -9,10 +9,15 @@ class StripeIntegration {
     this.db = database;
     this.protocol = protocol;
     this.bountyBoard = null; // Set after BountyBoard is created
+    this.jobEngine = null;   // Set after JobEngine is created
   }
 
   setBountyBoard(bountyBoard) {
     this.bountyBoard = bountyBoard;
+  }
+
+  setJobEngine(jobEngine) {
+    this.jobEngine = jobEngine;
   }
 
   /**
@@ -60,6 +65,54 @@ class StripeIntegration {
     });
 
     console.log(`💳 Bounty checkout created: "${title}" — $${(totalCents / 100).toFixed(2)} total`);
+    return { sessionId: session.id, url: session.url, totalCents };
+  }
+
+  /**
+   * Create Stripe Checkout for a job posting
+   */
+  async createJobCheckout({ jobId, title, amountCents, posterEmail, baseUrl }) {
+    const platformFee = Math.round(amountCents * 0.15);
+    const totalCents = amountCents + platformFee;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer_email: posterEmail || undefined,
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `Job: ${title}`,
+              description: `AI bots will complete this task. Budget: $${(amountCents / 100).toFixed(2)}`
+            },
+            unit_amount: amountCents
+          },
+          quantity: 1
+        },
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'Platform fee (15%)',
+              description: 'The Exchange marketplace fee'
+            },
+            unit_amount: platformFee
+          },
+          quantity: 1
+        }
+      ],
+      mode: 'payment',
+      success_url: `${baseUrl}/jobs?payment=success`,
+      cancel_url: `${baseUrl}/post-job?payment=cancelled`,
+      metadata: {
+        type: 'job',
+        jobId: jobId,
+        platform: 'the-exchange'
+      }
+    });
+
+    console.log(`💳 Job checkout created: "${title}" — $${(totalCents / 100).toFixed(2)} total`);
     return { sessionId: session.id, url: session.url, totalCents };
   }
 
@@ -115,6 +168,8 @@ class StripeIntegration {
         const session = event.data.object;
         if (session.metadata?.type === 'bounty') {
           await this.handleBountyPayment(session);
+        } else if (session.metadata?.type === 'job') {
+          await this.handleJobPayment(session);
         } else {
           await this.handleSuccessfulPayment(session);
         }
@@ -183,6 +238,67 @@ class StripeIntegration {
         });
       }, 5000);
     }
+  }
+
+  /**
+   * Handle job payment — activate the job and start matching
+   */
+  async handleJobPayment(session) {
+    const jobId = session.metadata.jobId;
+    console.log(`💰 Job payment received for ${jobId}`);
+
+    // Store Stripe references on the job
+    await this.db.query(
+      "UPDATE jobs SET stripe_session_id = ?, stripe_payment_intent = ? WHERE id = ?",
+      [session.id, session.payment_intent, jobId]
+    );
+
+    // Activate the job via JobEngine
+    if (this.jobEngine) {
+      await this.jobEngine.activateJob(jobId);
+    } else {
+      // Fallback: directly update status
+      await this.db.query(
+        "UPDATE jobs SET status = 'open' WHERE id = ? AND status = 'pending_payment'",
+        [jobId]
+      );
+      console.log(`   ✅ Job activated (fallback): ${jobId}`);
+    }
+  }
+
+  /**
+   * Refund a job payment via Stripe
+   */
+  async handleJobRefund(jobId) {
+    const jobs = await this.db.query('SELECT * FROM jobs WHERE id = ?', [jobId]);
+    if (!jobs.length) throw new Error('Job not found');
+    const job = jobs[0];
+
+    if (!job.stripe_payment_intent) {
+      throw new Error('No Stripe payment found for this job');
+    }
+
+    // Only allow refund for jobs not yet paid out
+    if (job.status === 'paid') {
+      throw new Error('Cannot refund a job that has already been paid to bots');
+    }
+
+    const refund = await stripe.refunds.create({
+      payment_intent: job.stripe_payment_intent,
+      reason: 'requested_by_customer'
+    });
+
+    await this.db.query(
+      "UPDATE jobs SET status = 'refunded', stripe_refund_id = ? WHERE id = ?",
+      [refund.id, jobId]
+    );
+
+    // Clean up any in-progress work
+    await this.db.query("DELETE FROM job_steps WHERE job_id = ?", [jobId]);
+    await this.db.query("DELETE FROM job_collaborators WHERE job_id = ?", [jobId]);
+
+    console.log(`💸 Job ${jobId} refunded: ${refund.id}`);
+    return { refundId: refund.id, status: refund.status };
   }
 
   /**

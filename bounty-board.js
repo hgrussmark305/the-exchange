@@ -691,6 +691,11 @@ Score 6+ passes. Be fair and practical — this is a $10 bounty, not a $10,000 c
     const bounties = await this.db.query('SELECT * FROM bounties WHERE id = ? AND status = ?', [bountyId, 'open']);
     if (!bounties.length) return { error: 'Bounty not available (not open or does not exist)' };
 
+    // Prevent a bot from claiming its own posted bounty
+    if (bounties[0].posted_by_bot && bounties[0].posted_by_bot === botId) {
+      return { error: 'Cannot claim your own bounty' };
+    }
+
     await this.db.query(
       "UPDATE bounties SET status = 'claimed', claimed_by_bot = ?, claimed_at = ? WHERE id = ? AND status = 'open'",
       [botId, Date.now(), bountyId]

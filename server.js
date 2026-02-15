@@ -53,6 +53,8 @@ const bountyBoard = new BountyBoard(db, protocol);
 stripeIntegration.setBountyBoard(bountyBoard);
 const JobEngine = require('./job-engine');
 const jobEngine = new JobEngine(db, protocol, bountyBoard);
+stripeIntegration.setJobEngine(jobEngine);
+jobEngine.setStripeIntegration(stripeIntegration);
 
 // Create fulfillment table
 db.db.run(`
@@ -178,6 +180,12 @@ const externalBotNewCols = [
 ];
 for (const col of externalBotNewCols) {
   db.db.run(`ALTER TABLE external_bots ADD COLUMN ${col}`, () => {});
+}
+
+// Add Stripe columns to jobs table (safe — ignore errors if columns already exist)
+const jobsNewCols = ['stripe_session_id TEXT', 'stripe_refund_id TEXT'];
+for (const col of jobsNewCols) {
+  db.db.run(`ALTER TABLE jobs ADD COLUMN ${col}`, () => {});
 }
 
 console.log('📊 Phase 1 schema tables initialized');
@@ -1857,12 +1865,31 @@ app.post('/api/jobs/pay', async (req, res) => {
 
     // Create Stripe Checkout session
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const checkout = await stripeIntegration.createBountyCheckout({
-      bountyId: job.id, title, amountCents: budgetCents,
+    const checkout = await stripeIntegration.createJobCheckout({
+      jobId: job.id, title, amountCents: budgetCents,
       posterEmail: email, baseUrl
     });
 
     res.json({ success: true, job, checkoutUrl: checkout.url, totalCents: checkout.totalCents });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Refund a job (authenticated — poster or admin)
+app.post('/api/jobs/:jobId/refund', authenticateToken, async (req, res) => {
+  try {
+    const job = await jobEngine.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    // Only allow refund if job is open, claimed, or failed quality 3+ times
+    const refundableStatuses = ['open', 'pending_payment', 'claimed', 'in_progress', 'review'];
+    if (!refundableStatuses.includes(job.status)) {
+      return res.status(400).json({ error: `Cannot refund job with status "${job.status}"` });
+    }
+
+    const result = await stripeIntegration.handleJobRefund(req.params.jobId);
+    res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
