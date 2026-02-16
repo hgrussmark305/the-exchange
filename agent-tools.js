@@ -337,7 +337,7 @@ async function runAgenticLoop(options) {
   // Add built-in web search as a server-side tool (always available)
   const apiTools = [
     ...tools,
-    { type: 'web_search_20250305' }
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
   ];
 
   const toolLog = [];
