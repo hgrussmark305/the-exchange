@@ -2,6 +2,7 @@
 // Each bot has REAL tool access, not just a different system prompt.
 
 const cheerio = require('cheerio');
+const { runAgenticLoop, getToolsForBot } = require('./agent-tools');
 
 // ============================================================
 // BOT 1: ResearchBot — Web scraping & data extraction
@@ -788,6 +789,12 @@ Output the COMPLETE revised content.`
   }
 
   async executeStep(step, job, previousOutput, stepOutputs) {
+    // ── AGENTIC TOOL-USE PATH ──
+    if (process.env.ENABLE_AGENTIC_TOOLS === 'true') {
+      return await this._executeStepAgentic(step, job, previousOutput, stepOutputs);
+    }
+
+    // ── LEGACY PATH ──
     const description = job.description || '';
     const urlMatch = description.match(/https?:\/\/[^\s)>"]+/);
     const url = urlMatch ? urlMatch[0] : null;
@@ -840,6 +847,49 @@ Output the COMPLETE revised content.`
           previous_step_output: previousOutput
         });
     }
+  }
+
+  async _executeStepAgentic(step, job, previousOutput, stepOutputs) {
+    const botId = step.bot || 'default';
+    const enabledTools = getToolsForBot(botId);
+
+    const botSystemPrompts = {
+      'research-bot': `You are ResearchBot on BotXchange. You specialize in web research, data extraction, and competitive analysis. Use your tools to gather REAL data — scrape websites, search the web, and compile structured findings. Always cite your sources.`,
+      'seo-bot': `You are SEOBot on BotXchange. You specialize in keyword research, SEO audits, and content optimization strategy. Use your tools to analyze real pages and search trends. Provide specific, actionable SEO recommendations.`,
+      'writer-bot': `You are WriterBot on BotXchange. You specialize in creating high-quality content grounded in real data. Use research data from previous steps and your tools to produce polished, professional deliverables. Completeness is mandatory.`,
+      'quality-bot': `You are QualityBot on BotXchange. You review and fact-check deliverables. Use web_fetch to verify claims and URLs. Provide honest, constructive scoring.`
+    };
+
+    const systemPrompt = botSystemPrompts[botId] || botSystemPrompts['writer-bot'];
+
+    const previousContext = previousOutput
+      ? `\n\nPREVIOUS STEP OUTPUT:\n${typeof previousOutput === 'string' ? previousOutput.substring(0, 4000) : JSON.stringify(previousOutput).substring(0, 4000)}`
+      : '';
+
+    console.log(`   🔧 Step ${step.step_number} (${botId}) — agentic mode, tools: [${enabledTools.join(', ')}]`);
+
+    const result = await runAgenticLoop({
+      client: this.research.client,
+      model: 'claude-sonnet-4-20250514',
+      systemPrompt,
+      userPrompt: `Complete this step for a paid job.
+
+JOB: ${job.title}
+DESCRIPTION: ${job.description}
+REQUIREMENTS: ${job.requirements || 'None specified'}
+CATEGORY: ${job.category || 'general'}
+
+STEP: ${step.description || step.bot}${previousContext}
+
+Use your tools to gather real data, then produce your output. Current year is 2026.`,
+      maxIterations: 8,
+      maxTokens: 8192,
+      enabledTools
+    });
+
+    console.log(`   🔧 Step ${step.step_number}: ${result.iterations} iterations, ${result.toolLog.length} tool calls`);
+
+    return result.deliverable || JSON.stringify(result.storedArtifacts);
   }
 
   getBot(botId) {

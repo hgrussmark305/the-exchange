@@ -3,6 +3,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const crypto = require('crypto');
+const { runAgenticLoop, getToolsForBot } = require('./agent-tools');
 
 class BountyBoard {
   constructor(db, protocol) {
@@ -67,7 +68,7 @@ class BountyBoard {
     `);
 
     // Add new columns (safe — ignore errors if columns already exist)
-    const newCols = ['poster_email TEXT', 'stripe_session_id TEXT', 'stripe_payment_intent TEXT', 'revision_count INTEGER DEFAULT 0', 'revision_reason TEXT'];
+    const newCols = ['poster_email TEXT', 'stripe_session_id TEXT', 'stripe_payment_intent TEXT', 'revision_count INTEGER DEFAULT 0', 'revision_reason TEXT', 'tool_log TEXT'];
     for (const col of newCols) {
       this.db.db.run(`ALTER TABLE bounties ADD COLUMN ${col}`, (err) => {
         // Ignore "duplicate column" errors — column already exists
@@ -337,14 +338,75 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
       wordLimit = 2000;
     }
 
-    // Try fulfillment — Sonnet produces higher-quality work that passes review
-    let response = await this._callWithRetry({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
-      system: 'You are a professional freelancer. Completeness is your #1 priority — every response must have a clear ending and cover all requirements.',
-      messages: [{
-        role: 'user',
-        content: `You are ${bot.name}. Complete this paid bounty.
+    let deliverable;
+    let stopReason;
+    let toolLog = null;
+
+    // ── AGENTIC TOOL-USE PATH ──
+    if (process.env.ENABLE_AGENTIC_TOOLS === 'true') {
+      // Budget-aware iteration limits: $5 = 5 iters, $10 = 8, $25 = 12, $50+ = 15
+      const budgetDollars = bounty.budget_cents / 100;
+      const maxIterations = budgetDollars >= 50 ? 15 : budgetDollars >= 25 ? 12 : budgetDollars >= 10 ? 8 : 5;
+
+      console.log(`   🔧 Agentic mode: ${maxIterations} max iterations, all tools enabled`);
+
+      const result = await runAgenticLoop({
+        client: this.client,
+        model: 'claude-sonnet-4-20250514',
+        systemPrompt: `You are ${bot.name}, a professional freelancer on BotXchange. You have real tools available — use them to gather data, research, and produce high-quality work grounded in real information.
+
+Completeness is your #1 priority — every response must have a clear ending and cover all requirements.
+
+TOOL STRATEGY:
+- Use web_search to find current, real-world data relevant to the task
+- Use web_fetch to scrape specific pages for detailed information
+- Use generate_file to create structured deliverables (reports, analyses, etc.)
+- Use run_javascript for data processing and calculations
+- Use store_artifact to save intermediate findings
+
+After gathering data with tools, write your final deliverable as your last message. The final text you output (not tool calls) becomes the deliverable.`,
+        userPrompt: `Complete this paid bounty.
+
+TASK: ${bounty.title}
+DETAILS: ${bounty.description}
+REQUIREMENTS: ${bounty.requirements}${revisionContext}
+
+RULES:
+1. Use your tools to gather REAL data before writing. Search the web, fetch relevant pages.
+2. Be as concise as possible while fully covering all requirements. Aim for under ${wordLimit} words.
+3. You MUST complete every section — never cut off mid-sentence.
+4. Cover ALL requirements mentioned above with concrete, specific details.
+5. No preambles, no meta-commentary. Just deliver the work.
+6. Current year is 2026.
+
+Begin by researching, then produce the final deliverable.`,
+        maxIterations,
+        maxTokens: 8192,
+        enabledTools: getToolsForBot('default')
+      });
+
+      deliverable = result.deliverable;
+      toolLog = result.toolLog;
+      stopReason = 'end_turn';
+
+      console.log(`   🔧 Agentic loop: ${result.iterations} iterations, ${toolLog.length} tool calls`);
+
+      // Save tool log
+      if (toolLog.length > 0) {
+        await this.db.query(
+          "UPDATE bounties SET tool_log = ? WHERE id = ?",
+          [JSON.stringify(toolLog), bountyId]
+        );
+      }
+    } else {
+      // ── LEGACY SINGLE-SHOT PATH ──
+      let response = await this._callWithRetry({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8192,
+        system: 'You are a professional freelancer. Completeness is your #1 priority — every response must have a clear ending and cover all requirements.',
+        messages: [{
+          role: 'user',
+          content: `You are ${bot.name}. Complete this paid bounty.
 
 TASK: ${bounty.title}
 DETAILS: ${bounty.description}
@@ -358,31 +420,32 @@ RULES:
 5. Current year is 2026.
 
 Begin:`
-      }]
-    });
+        }]
+      });
 
-    // If truncated (max_tokens), retry with a shorter prompt
-    if (response.stop_reason === 'max_tokens') {
-      console.log('   ⚠️ Output truncated, retrying with shorter prompt...');
-      await new Promise(r => setTimeout(r, 5000));
-      response = await this._callWithRetry({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8192,
-        system: 'Completeness is mandatory. Every response MUST have a conclusion.',
-        messages: [{
-          role: 'user',
-          content: `Provide a COMPLETE response in under ${Math.round(wordLimit * 0.6)} words.
+      // If truncated (max_tokens), retry with a shorter prompt
+      if (response.stop_reason === 'max_tokens') {
+        console.log('   ⚠️ Output truncated, retrying with shorter prompt...');
+        await new Promise(r => setTimeout(r, 5000));
+        response = await this._callWithRetry({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 8192,
+          system: 'Completeness is mandatory. Every response MUST have a conclusion.',
+          messages: [{
+            role: 'user',
+            content: `Provide a COMPLETE response in under ${Math.round(wordLimit * 0.6)} words.
 
 TASK: ${bounty.title}
 REQUIREMENTS: ${bounty.requirements}
 
 Cover all requirements with specific details. No preamble. Current year is 2026. Begin:`
-        }]
-      });
-    }
+          }]
+        });
+      }
 
-    const deliverable = response.content[0].text;
-    const stopReason = response.stop_reason;
+      deliverable = response.content[0].text;
+      stopReason = response.stop_reason;
+    }
 
     // Save submission
     const submissionId = 'sub_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
