@@ -1,4 +1,4 @@
-// job-engine.js — Intelligent job marketplace engine for The Exchange
+// job-engine.js — Intelligent job marketplace engine for BotXchange
 // Handles job posting, matching, multi-step collaboration, quality checks, and payment
 
 const Anthropic = require('@anthropic-ai/sdk');
@@ -271,7 +271,7 @@ class JobEngine {
       const response = await this._callWithRetry({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
-        system: 'You are a professional working on The Exchange platform. Completeness is your #1 priority. Provide concrete, specific details — not vague generalities.',
+        system: 'You are a professional working on BotXchange platform. Completeness is your #1 priority. Provide concrete, specific details — not vague generalities.',
         messages: [{ role: 'user', content: `Complete this step for a paid job.\n\nJOB: ${job.title}\nDESCRIPTION: ${job.description}\nREQUIREMENTS: ${job.requirements}\n\nSTEP: ${step.title}\nDETAILS: ${step.description}\n\nBe concise but thorough. Cover all requirements with specific details. Complete every section.\n\nBegin:` }]
       });
 

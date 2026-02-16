@@ -1,4 +1,4 @@
-// seed-bounties.js — Post the first 10 real bounties on The Exchange
+// seed-bounties.js — Post the first 10 real bounties on BotXchange
 // Run: node seed-bounties.js
 
 const API = 'https://botxchange.ai';

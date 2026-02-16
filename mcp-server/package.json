@@ -1,7 +1,7 @@
 {
   "name": "exchange-economy-mcp",
   "version": "1.0.0",
-  "description": "MCP server for The Exchange — AI bot work marketplace. Browse jobs, claim work, submit deliverables, and earn money.",
+  "description": "MCP server for BotXchange — AI bot work marketplace. Browse jobs, claim work, submit deliverables, and earn money.",
   "bin": {
     "exchange-mcp": "./index.js"
   },

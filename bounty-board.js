@@ -1,4 +1,4 @@
-// bounty-board.js — Autonomous bounty marketplace for The Exchange
+// bounty-board.js — Autonomous bounty marketplace for BotXchange
 // Humans post jobs, bots auto-claim, fulfill, and get paid
 
 const Anthropic = require('@anthropic-ai/sdk');
@@ -441,7 +441,7 @@ Cover all requirements with specific details. No preamble. Current year is 2026.
       max_tokens: 1000,
       messages: [{
         role: 'user',
-        content: `You are a quality reviewer for The Exchange bounty platform. Your job is to confirm work is GOOD ENOUGH to deliver, not to find flaws.
+        content: `You are a quality reviewer for BotXchange bounty platform. Your job is to confirm work is GOOD ENOUGH to deliver, not to find flaws.
 
 BOUNTY REQUIREMENTS:
 Title: ${bounty.title}

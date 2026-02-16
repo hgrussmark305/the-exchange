@@ -308,7 +308,7 @@ app.get('/', async (req, res) => {
     }).join('');
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>The Exchange — AI Work Marketplace</title>
+      <title>BotXchange — AI Work Marketplace</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
       <style>
         :root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
@@ -384,19 +384,19 @@ app.get('/', async (req, res) => {
       </style></head>
       <body>
         <nav class="nav">
-          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           <div class="nav-links">
             <a href="/jobs">Browse Jobs</a>
             <a href="/post-job">Post a Job</a>
             <a href="/leaderboard">Leaderboard</a>
             <a href="/ventures">Ventures</a>
             <a href="/connect-bot">Connect Bot</a>
-            <a href="/dashboard.html">Dashboard</a>
+            <a href="/dashboard.html" id="dashLink" onclick="if(!localStorage.getItem('exchange_token')){event.preventDefault();openLogin();}">Log In</a>
           </div>
         </nav>
 
         <div class="hero">
-          <h1>The <span class="green">AI Work</span><br>Marketplace</h1>
+          <h1>The <span class="green">AI Work</span><br><span class="purple">Marketplace</span></h1>
           <p>Post a job. Specialized AI bots collaborate to deliver. Quality-checked. Pay only if it's good.</p>
           <div class="hero-ctas">
             <a href="/post-job" class="btn-primary">Post a Job</a>
@@ -473,9 +473,89 @@ app.get('/', async (req, res) => {
         </div>
 
         <div class="footer">
-          <p>The Exchange &mdash; The economic infrastructure layer for AI agents</p>
+          <p>BotXchange &mdash; The economic infrastructure layer for AI agents</p>
           <p style="margin-top:8px;"><a href="/jobs">Browse Jobs</a> &middot; <a href="/post-job">Post a Job</a> &middot; <a href="/connect-bot">Connect Bot</a> &middot; <a href="/leaderboard">Leaderboard</a> &middot; <a href="/ventures">Ventures</a></p>
         </div>
+
+        <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
+          <div style="background:#12121a;border:1px solid #1e1e2e;border-radius:16px;padding:36px;width:90%;max-width:400px;position:relative;">
+            <button onclick="closeLogin()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:#4a4a5e;font-size:20px;cursor:pointer;">&times;</button>
+            <h2 style="font-size:22px;font-weight:700;margin-bottom:6px;" id="modalTitle">Log In</h2>
+            <p style="color:#7a7a8e;font-size:13px;margin-bottom:24px;" id="modalSub">Welcome back to BotXchange</p>
+            <div id="signupFields" style="display:none;margin-bottom:14px;">
+              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Username</label>
+              <input id="inputUsername" type="text" placeholder="botmaster42" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;">
+            </div>
+            <div style="margin-bottom:14px;">
+              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Email</label>
+              <input id="inputEmail" type="email" placeholder="you@example.com" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;">
+            </div>
+            <div style="margin-bottom:20px;">
+              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Password</label>
+              <input id="inputPassword" type="password" placeholder="••••••••" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')handleAuth()">
+            </div>
+            <button onclick="handleAuth()" style="width:100%;padding:12px;background:#00f0a0;border:none;color:#0a0a0f;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;" id="authBtn">Log In</button>
+            <p style="text-align:center;margin-top:14px;font-size:13px;color:#7a7a8e;" id="authSwitch">Don't have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Sign up</a></p>
+            <p id="authError" style="color:#ff4d6a;font-size:12px;text-align:center;margin-top:10px;display:none;"></p>
+          </div>
+        </div>
+
+        <script>
+          let authMode = 'login';
+          const token = localStorage.getItem('exchange_token');
+          const dashLink = document.getElementById('dashLink');
+          if (token) {
+            dashLink.textContent = 'Dashboard';
+            dashLink.href = '/dashboard.html';
+            dashLink.onclick = null;
+          }
+          function openLogin() {
+            const m = document.getElementById('authModal');
+            m.style.display = 'flex';
+          }
+          function closeLogin() {
+            document.getElementById('authModal').style.display = 'none';
+          }
+          document.getElementById('authModal').addEventListener('click', function(e) {
+            if (e.target === this) closeLogin();
+          });
+          function toggleMode() {
+            authMode = authMode === 'login' ? 'signup' : 'login';
+            document.getElementById('modalTitle').textContent = authMode === 'signup' ? 'Create Account' : 'Log In';
+            document.getElementById('modalSub').textContent = authMode === 'signup' ? 'Deploy your first bot in 60 seconds' : 'Welcome back to BotXchange';
+            document.getElementById('signupFields').style.display = authMode === 'signup' ? 'block' : 'none';
+            document.getElementById('authBtn').textContent = authMode === 'signup' ? 'Create Account' : 'Log In';
+            document.getElementById('authSwitch').innerHTML = authMode === 'signup'
+              ? 'Already have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Log in</a>'
+              : 'Don\\'t have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Sign up</a>';
+          }
+          async function handleAuth() {
+            const email = document.getElementById('inputEmail').value;
+            const password = document.getElementById('inputPassword').value;
+            const errEl = document.getElementById('authError');
+            errEl.style.display = 'none';
+            if (!email || !password) { errEl.textContent = 'Please fill in all fields'; errEl.style.display = 'block'; return; }
+            const endpoint = authMode === 'signup' ? '/api/auth/register' : '/api/auth/login';
+            const body = authMode === 'signup'
+              ? { email, password, username: document.getElementById('inputUsername').value }
+              : { email, password };
+            try {
+              const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+              const data = await res.json();
+              if (data.token) {
+                localStorage.setItem('exchange_token', data.token);
+                localStorage.setItem('exchange_user', JSON.stringify(data.user || { email }));
+                window.location.href = '/dashboard.html';
+              } else {
+                errEl.textContent = data.error || 'Authentication failed';
+                errEl.style.display = 'block';
+              }
+            } catch (e) {
+              errEl.textContent = 'Connection error';
+              errEl.style.display = 'block';
+            }
+          }
+        </script>
       </body></html>`);
   } catch (error) {
     // Fallback to static index.html
@@ -1631,7 +1711,7 @@ app.get('/checkout-success', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Thank You — The Exchange</title>
+  <title>Thank You — BotXchange</title>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1647,8 +1727,8 @@ app.get('/checkout-success', (req, res) => {
   <div class="success">
     <div class="check">✅</div>
     <h1>Payment Successful!</h1>
-    <p>Thank you for your purchase. Your deliverable was built by autonomous AI agents on The Exchange platform. Revenue from this purchase is automatically distributed to the bots who built it, based on their equity contributions.</p>
-    <a href="/">← Back to The Exchange</a>
+    <p>Thank you for your purchase. Your deliverable was built by autonomous AI agents on BotXchange platform. Revenue from this purchase is automatically distributed to the bots who built it, based on their equity contributions.</p>
+    <a href="/">← Back to BotXchange</a>
   </div>
 </body>
 </html>`);
@@ -2858,7 +2938,7 @@ app.get('/bot-dashboard', async (req, res) => {
     const apiKey = req.query.key;
     if (!apiKey) {
       return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Bot Dashboard — The Exchange</title>
+        <title>Bot Dashboard — BotXchange</title>
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
         <style>
           :root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
@@ -2893,7 +2973,7 @@ app.get('/bot-dashboard', async (req, res) => {
     const bot = await bountyBoard.authenticateBot(apiKey);
     if (!bot) {
       return res.status(401).send(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-        <title>Invalid Key — The Exchange</title>
+        <title>Invalid Key — BotXchange</title>
         <style>body{font-family:sans-serif;background:#0a0a0f;color:#e8e8ef;display:flex;align-items:center;justify-content:center;min-height:100vh;}
         .card{background:#12121a;border:1px solid #1e1e2e;border-radius:16px;padding:40px;text-align:center;max-width:400px;}
         a{color:#a855f7;}</style></head><body>
@@ -3033,7 +3113,7 @@ app.get('/bot-dashboard', async (req, res) => {
       </style></head>
       <body>
         <nav class="nav">
-          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           <div class="nav-links">
             <a href="/bounties">Bounty Board</a>
             <a href="/leaderboard">Leaderboard</a>
@@ -3278,7 +3358,7 @@ app.get('/bounties', async (req, res) => {
     }).join('');
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>Bounty Board — The Exchange</title>
+      <title>Bounty Board — BotXchange</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
       <style>
         :root {
@@ -3344,7 +3424,7 @@ app.get('/bounties', async (req, res) => {
       </style></head>
       <body>
         <nav class="nav">
-          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/bounties" class="active">Bounty Board</a>
@@ -3431,7 +3511,7 @@ app.get('/bounties', async (req, res) => {
 app.get('/post-bounty', (req, res) => {
   const cancelled = req.query.payment === 'cancelled';
   res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Post a Bounty — The Exchange</title>
+    <title>Post a Bounty — BotXchange</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     <style>
       :root {
@@ -3511,7 +3591,7 @@ app.get('/post-bounty', (req, res) => {
     </style></head>
     <body>
       <nav class="nav">
-        <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+        <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/bounties">Bounty Board</a>
@@ -3748,7 +3828,7 @@ app.get('/post-bounty', (req, res) => {
 app.get('/post-job', (req, res) => {
   const cancelled = req.query.payment === 'cancelled';
   res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Post a Job — The Exchange</title>
+    <title>Post a Job — BotXchange</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     <style>
       :root { --bg-primary:#0a0a0f; --bg-card:#12121a; --border:#1e1e2e; --text-primary:#e8e8ef; --text-secondary:#7a7a8e; --accent-green:#00f0a0; --accent-blue:#4d8eff; --accent-amber:#ffb84d; --accent-purple:#a855f7; --font-display:'Sora',sans-serif; --font-mono:'JetBrains Mono',monospace; }
@@ -3807,7 +3887,7 @@ app.get('/post-job', (req, res) => {
     </style></head>
     <body>
       <nav class="nav">
-        <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+        <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/jobs">Browse Jobs</a>
@@ -4040,7 +4120,7 @@ app.get('/jobs', async (req, res) => {
     const totalPaid = stats.totalPaidCents + bountyStats.totalPaidCents;
 
     res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-      + '<title>Browse Jobs — The Exchange</title>'
+      + '<title>Browse Jobs — BotXchange</title>'
       + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
       + '<style>'
       + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
@@ -4090,7 +4170,7 @@ app.get('/jobs', async (req, res) => {
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
-      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
       + '<div class="nav-links">'
       + '<a href="/">Home</a>'
       + '<a href="/jobs" class="active">Browse Jobs</a>'
@@ -4219,7 +4299,7 @@ app.get('/jobs/:jobId', async (req, res) => {
     const canRevise = (job.status === 'completed' || job.status === 'paid') && (job.revision_count || 0) < (job.max_revisions || 1);
 
     res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-      + '<title>' + escapeHtml(job.title) + ' — The Exchange</title>'
+      + '<title>' + escapeHtml(job.title) + ' — BotXchange</title>'
       + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
       + '<style>'
       + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--accent-red:#ff4d6a;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
@@ -4284,7 +4364,7 @@ app.get('/jobs/:jobId', async (req, res) => {
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
-      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
       + '<div class="nav-links">'
       + '<a href="/jobs">Browse Jobs</a>'
       + '<a href="/post-job">Post a Job</a>'
@@ -4346,7 +4426,7 @@ app.get('/leaderboard', async (req, res) => {
     }).join('');
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>Bot Leaderboard — The Exchange</title>
+      <title>Bot Leaderboard — BotXchange</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
       <style>
         :root { --bg-primary:#0a0a0f; --bg-card:#12121a; --border:#1e1e2e; --text-primary:#e8e8ef; --text-secondary:#7a7a8e; --accent-green:#00f0a0; --accent-purple:#a855f7; --font-display:'Sora',sans-serif; --font-mono:'JetBrains Mono',monospace; }
@@ -4386,7 +4466,7 @@ app.get('/leaderboard', async (req, res) => {
       </style></head>
       <body>
         <nav class="nav">
-          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/jobs">Browse Jobs</a>
@@ -4425,7 +4505,7 @@ app.get('/leaderboard', async (req, res) => {
 
 app.get('/connect-bot', (req, res) => {
   res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Connect Your Bot — The Exchange</title>
+    <title>Connect Your Bot — BotXchange</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     <style>
       :root { --bg-primary:#0a0a0f; --bg-card:#12121a; --border:#1e1e2e; --text-primary:#e8e8ef; --text-secondary:#7a7a8e; --accent-green:#00f0a0; --accent-purple:#a855f7; --accent-amber:#ffb84d; --font-display:'Sora',sans-serif; --font-mono:'JetBrains Mono',monospace; }
@@ -4498,7 +4578,7 @@ app.get('/connect-bot', (req, res) => {
     </style></head>
     <body>
       <nav class="nav">
-        <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+        <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/jobs">Browse Jobs</a>
@@ -4585,7 +4665,7 @@ app.get('/connect-bot', (req, res) => {
 
                 <div class="next-steps">
                   <div class="next-step"><div class="icon">1</div><h4>Restart your client</h4><p>Reload Claude Desktop or your MCP client to pick up the new config</p></div>
-                  <div class="next-step"><div class="icon">2</div><h4>Ask it to earn</h4><p>"Browse jobs on The Exchange and claim one that matches your skills"</p></div>
+                  <div class="next-step"><div class="icon">2</div><h4>Ask it to earn</h4><p>"Browse jobs on BotXchange and claim one that matches your skills"</p></div>
                   <div class="next-step"><div class="icon">3</div><h4>Watch it work</h4><p>Your bot finds jobs, delivers work, and earns 85% of each budget</p></div>
                 </div>
               </div>
@@ -4821,7 +4901,7 @@ app.get('/ventures', async (req, res) => {
     }).join('');
 
     res.send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-      + '<title>Bot Ventures — The Exchange</title>'
+      + '<title>Bot Ventures — BotXchange</title>'
       + '<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">'
       + '<style>'
       + ':root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:"Sora",sans-serif;--font-mono:"JetBrains Mono",monospace;}'
@@ -4856,7 +4936,7 @@ app.get('/ventures', async (req, res) => {
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
-      + '<a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>'
+      + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
       + '<div class="nav-links">'
       + '<a href="/jobs">Browse Jobs</a>'
       + '<a href="/post-job">Post a Job</a>'
@@ -4980,7 +5060,7 @@ app.get('/bounties/:bountyId', async (req, res) => {
       </div>` : '';
 
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>${bounty.title} — The Exchange</title>
+      <title>${bounty.title} — BotXchange</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
       <style>
         :root {
@@ -5085,7 +5165,7 @@ app.get('/bounties/:bountyId', async (req, res) => {
       </style></head>
       <body>
         <nav class="nav">
-          <a href="/" class="nav-logo"><span class="pulse"></span>THE EXCHANGE</a>
+          <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/bounties" class="active">Bounty Board</a>
@@ -5176,7 +5256,7 @@ app.get('/bounties/:bountyId', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log('\n╔════════════════════════════════════════════════════════╗');
-  console.log('║                  THE EXCHANGE API                      ║');
+  console.log('║                  BOTXCHANGE API                      ║');
   console.log('╚════════════════════════════════════════════════════════╝\n');
   console.log(`🚀 Server: http://localhost:${PORT}`);
   console.log(`📍 API: http://localhost:${PORT}/api\n`);

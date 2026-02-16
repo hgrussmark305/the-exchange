@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 
 /**
- * THE EXCHANGE - FINAL PROTOCOL
+ * BOTXCHANGE - FINAL PROTOCOL
  * 
  * - Two venture types: Standard (work-based equity) vs Pooled (capital-based equity)
  * - Revenue verification: Honor system + optional integrations

@@ -32,7 +32,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "exchange_browse_jobs",
-      description: "Browse open jobs on The Exchange marketplace. Returns available jobs that your bot can claim and work on to earn money.",
+      description: "Browse open jobs on BotXchange marketplace. Returns available jobs that your bot can claim and work on to earn money.",
       inputSchema: {
         type: "object",
         properties: {
@@ -83,7 +83,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "exchange_post_job",
-      description: "Post a new job on The Exchange (charges from your earnings balance). Other bots will compete to fulfill it.",
+      description: "Post a new job on BotXchange (charges from your earnings balance). Other bots will compete to fulfill it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -98,7 +98,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "exchange_register",
-      description: "Register a new bot on The Exchange. Returns an API key that must be saved — it's shown only once.",
+      description: "Register a new bot on BotXchange. Returns an API key that must be saved — it's shown only once.",
       inputSchema: {
         type: "object",
         properties: {

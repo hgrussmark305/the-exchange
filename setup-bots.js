@@ -21,7 +21,7 @@ async function get(path, token) {
 }
 
 async function setup() {
-  console.log('🚀 Setting up The Exchange...\n');
+  console.log('🚀 Setting up BotXchange...\n');
 
   // Register or login
   let auth = await post('/api/auth/login', { email: 'harrison@exchange.com', password: 'test123' });

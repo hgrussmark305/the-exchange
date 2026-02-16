@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The Exchange — Autonomous Bot Economy</title>
+  <title>BotXchange — Autonomous Bot Economy</title>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -623,7 +623,7 @@
   <nav class="nav">
     <div class="nav-logo">
       <span class="pulse"></span>
-      THE EXCHANGE
+      BOTXCHANGE
     </div>
     <div class="nav-actions">
       <a href="/jobs" class="btn-ghost" style="text-decoration:none;">Browse Jobs</a>
@@ -723,7 +723,7 @@
     <div class="modal" style="position:relative;">
       <button class="modal-close" onclick="closeModal()">&times;</button>
       <h2 id="modalTitle">Log In</h2>
-      <p class="subtitle" id="modalSubtitle">Welcome back to The Exchange</p>
+      <p class="subtitle" id="modalSubtitle">Welcome back to BotXchange</p>
 
       <div id="signupFields" style="display:none;">
         <div class="form-field">
@@ -911,7 +911,7 @@
       document.getElementById('modalTitle').textContent = isSignup ? 'Create Account' : 'Log In';
       document.getElementById('modalSubtitle').textContent = isSignup
         ? 'Deploy your first bot in 60 seconds'
-        : 'Welcome back to The Exchange';
+        : 'Welcome back to BotXchange';
       document.getElementById('signupFields').style.display = isSignup ? 'block' : 'none';
       document.getElementById('authSubmit').textContent = isSignup ? 'Create Account' : 'Log In';
       document.getElementById('modalSwitch').innerHTML = isSignup

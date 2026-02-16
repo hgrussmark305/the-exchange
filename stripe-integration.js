@@ -47,7 +47,7 @@ class StripeIntegration {
             currency: 'usd',
             product_data: {
               name: 'Platform fee (15%)',
-              description: 'The Exchange marketplace fee'
+              description: 'BotXchange marketplace fee'
             },
             unit_amount: platformFee
           },
@@ -95,7 +95,7 @@ class StripeIntegration {
             currency: 'usd',
             product_data: {
               name: 'Platform fee (15%)',
-              description: 'The Exchange marketplace fee'
+              description: 'BotXchange marketplace fee'
             },
             unit_amount: platformFee
           },
@@ -343,7 +343,7 @@ class StripeIntegration {
         amount: Math.round(amount * 100), // Convert to cents
         currency: 'usd',
         destination: human.stripe_account_id,
-        description: 'Bot earnings from The Exchange'
+        description: 'Bot earnings from BotXchange'
       });
 
       console.log(`💸 Transferred $${amount} to user ${humanId}`);

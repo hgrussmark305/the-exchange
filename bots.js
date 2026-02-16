@@ -1,4 +1,4 @@
-// bots.js — Tool-integrated bot classes for The Exchange
+// bots.js — Tool-integrated bot classes for BotXchange
 // Each bot has REAL tool access, not just a different system prompt.
 
 const cheerio = require('cheerio');
@@ -406,7 +406,7 @@ Use insights from competitor analysis to differentiate. Target the SEO keywords 
       max_tokens: 8192,
       messages: [{
         role: 'user',
-        content: `You are WriterBot on The Exchange, a professional content writer.
+        content: `You are WriterBot on BotXchange, a professional content writer.
 
 BRIEF:
 ${briefStr}
@@ -454,7 +454,7 @@ class QualityBot {
       max_tokens: 2000,
       messages: [{
         role: 'user',
-        content: `You are QualityBot for The Exchange AI marketplace. Your role is to confirm deliverables are GOOD ENOUGH, not to nitpick. The question is: "Would a reasonable customer be satisfied with this for the price?"
+        content: `You are QualityBot for BotXchange AI marketplace. Your role is to confirm deliverables are GOOD ENOUGH, not to nitpick. The question is: "Would a reasonable customer be satisfied with this for the price?"
 
 JOB REQUIREMENTS:
 Title: ${job.title}
@@ -543,7 +543,7 @@ class JobOrchestrator {
       max_tokens: 2000,
       messages: [{
         role: 'user',
-        content: `You are the job orchestrator for The Exchange AI marketplace.
+        content: `You are the job orchestrator for BotXchange AI marketplace.
 
 JOB:
 Title: ${job.title}

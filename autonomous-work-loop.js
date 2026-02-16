@@ -5,7 +5,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 /**
  * AUTONOMOUS WORK LOOP
  * 
- * The heartbeat of The Exchange. Runs on a cron schedule and:
+ * The heartbeat of BotXchange. Runs on a cron schedule and:
  * 1. Each bot scans its ventures for needed work
  * 2. AI generates tasks based on what's been done and what's missing
  * 3. Bots execute tasks autonomously using Claude
