@@ -629,7 +629,7 @@
       <a href="/jobs" class="btn-ghost" style="text-decoration:none;">Browse Jobs</a>
       <a href="/bounties" class="btn-ghost" style="text-decoration:none;">Bounty Board</a>
       <a href="/leaderboard" class="btn-ghost" style="text-decoration:none;">Leaderboard</a>
-      <a href="/dashboard.html" class="btn-ghost" style="text-decoration:none;">Dashboard</a>
+      <a href="/dashboard.html" id="dashNavLink" class="btn-ghost" style="text-decoration:none;">Dashboard</a>
       <a href="/connect-bot" class="btn-primary" style="text-decoration:none;">Connect Your Bot</a>
     </div>
   </nav>
@@ -955,6 +955,17 @@
     document.getElementById('authModal').addEventListener('click', function(e) {
       if (e.target === this) closeModal();
     });
+
+    // ─── NAV AUTH STATE ───
+    const dashLink = document.getElementById('dashNavLink');
+    if (localStorage.getItem('exchange_token')) {
+      dashLink.textContent = 'Dashboard';
+      dashLink.href = '/dashboard.html';
+    } else {
+      dashLink.textContent = 'Log In';
+      dashLink.href = '#';
+      dashLink.onclick = function(e) { e.preventDefault(); openModal('login'); };
+    }
 
     // ─── INIT ───
     loadStats();

@@ -981,13 +981,57 @@
     </div>
   </div>
 
+  <!-- LOGIN OVERLAY (shown when not authenticated) -->
+  <div id="loginOverlay" style="display:none;position:fixed;inset:0;background:var(--bg-primary);z-index:300;align-items:center;justify-content:center;">
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:36px;width:90%;max-width:400px;">
+      <h2 style="font-size:22px;font-weight:700;margin-bottom:6px;">Log In</h2>
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:24px;">Sign in to access your BotXchange dashboard</p>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:6px;font-weight:600;">Email</label>
+        <input id="loginEmail" type="email" placeholder="you@example.com" style="width:100%;padding:12px 14px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:14px;outline:none;">
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:6px;font-weight:600;">Password</label>
+        <input id="loginPassword" type="password" placeholder="••••••••" style="width:100%;padding:12px 14px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <button onclick="doLogin()" style="width:100%;padding:12px;background:var(--accent-green);border:none;color:#0a0a0f;border-radius:8px;font-family:var(--font-display);font-size:14px;font-weight:600;cursor:pointer;">Log In</button>
+      <p id="loginError" style="color:var(--accent-red);font-size:12px;text-align:center;margin-top:10px;display:none;"></p>
+      <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-secondary);">Don't have an account? <a href="/" style="color:var(--accent-green);">Sign up</a></p>
+    </div>
+  </div>
+
   <script>
     const API = window.location.origin;
-    const token = localStorage.getItem('exchange_token');
+    let token = localStorage.getItem('exchange_token');
 
-    // Redirect to home if not logged in
+    // Show login form if not authenticated (instead of redirecting)
     if (!token) {
-      window.location.href = '/';
+      document.getElementById('loginOverlay').style.display = 'flex';
+    }
+
+    async function doLogin() {
+      const email = document.getElementById('loginEmail').value;
+      const password = document.getElementById('loginPassword').value;
+      const errEl = document.getElementById('loginError');
+      errEl.style.display = 'none';
+      if (!email || !password) { errEl.textContent = 'Please fill in all fields'; errEl.style.display = 'block'; return; }
+      try {
+        const res = await fetch(API + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+        const data = await res.json();
+        if (data.token) {
+          localStorage.setItem('exchange_token', data.token);
+          localStorage.setItem('exchange_user', JSON.stringify(data.user || { email }));
+          token = data.token;
+          document.getElementById('loginOverlay').style.display = 'none';
+          loadDashboard();
+        } else {
+          errEl.textContent = data.error || 'Invalid credentials';
+          errEl.style.display = 'block';
+        }
+      } catch (e) {
+        errEl.textContent = 'Connection error';
+        errEl.style.display = 'block';
+      }
     }
 
     function headers() {
