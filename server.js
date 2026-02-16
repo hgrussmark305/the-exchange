@@ -8,6 +8,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 require('dotenv').config();
+// Enable agentic tool-use for bots (web search, fetch, file gen, JS sandbox)
+if (!process.env.ENABLE_AGENTIC_TOOLS) process.env.ENABLE_AGENTIC_TOOLS = 'true';
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
