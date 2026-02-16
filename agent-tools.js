@@ -51,17 +51,8 @@ const TOOL_DEFINITIONS = [
       required: ['url']
     }
   },
-  {
-    name: 'web_search',
-    description: 'Search the web for information. Returns relevant search results with titles, URLs, and snippets. Use this to find current information, research topics, discover competitors, or find data sources.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'The search query' }
-      },
-      required: ['query']
-    }
-  },
+  // web_search is handled as a built-in server-side tool (web_search_20250305)
+  // It's added automatically in runAgenticLoop() — no custom definition needed
   {
     name: 'api_request',
     description: 'Make an HTTP request to an external API. Supports GET, POST, PUT, DELETE. Use this to interact with public APIs, fetch JSON data, or test endpoints.',
@@ -185,40 +176,6 @@ async function executeWebFetch(input) {
   }
 }
 
-async function executeWebSearch(input, client) {
-  // Use Claude's built-in web search tool via a sub-call
-  const { query } = input;
-  if (!query) return { error: 'Search query is required' };
-
-  try {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      tools: [{ type: 'web_search_20250305' }],
-      messages: [{ role: 'user', content: `Search the web for: ${query}\n\nReturn the top results with titles, URLs, and brief descriptions.` }]
-    });
-
-    // Extract the search results and text from the response
-    const results = [];
-    let textSummary = '';
-    for (const block of response.content) {
-      if (block.type === 'web_search_tool_result') {
-        for (const sr of (block.content || [])) {
-          if (sr.type === 'web_search_result') {
-            results.push({ title: sr.title, url: sr.url, snippet: sr.snippet || '' });
-          }
-        }
-      } else if (block.type === 'text') {
-        textSummary += block.text;
-      }
-    }
-
-    return { success: true, query, resultCount: results.length, results: results.slice(0, 10), summary: textSummary.substring(0, 2000) };
-  } catch (err) {
-    return { success: false, query, error: err.message };
-  }
-}
-
 async function executeApiRequest(input) {
   const { method, url, headers, body } = input;
   if (!url) return { error: 'URL is required' };
@@ -330,8 +287,6 @@ async function executeTool(toolName, toolInput, context) {
   switch (toolName) {
     case 'web_fetch':
       return await executeWebFetch(toolInput);
-    case 'web_search':
-      return await executeWebSearch(toolInput, client);
     case 'api_request':
       return await executeApiRequest(toolInput);
     case 'generate_file':
@@ -379,10 +334,10 @@ async function runAgenticLoop(options) {
     tools = TOOL_DEFINITIONS.filter(t => enabledTools.includes(t.name));
   }
 
-  // Add web_search as a server-side tool
+  // Add built-in web search as a server-side tool (always available)
   const apiTools = [
-    ...tools.filter(t => t.name !== 'web_search'),
-    ...((!enabledTools || enabledTools.includes('web_search')) ? [{ type: 'web_search_20250305' }] : [])
+    ...tools,
+    { type: 'web_search_20250305' }
   ];
 
   const toolLog = [];
@@ -415,18 +370,30 @@ async function runAgenticLoop(options) {
       throw err;
     }
 
-    // Collect text blocks and tool-use blocks
+    // Collect text blocks and tool-use blocks (our custom tools only)
     const textBlocks = [];
-    const toolUseBlocks = [];
-    const toolResults = [];
+    const toolUseBlocks = []; // only our custom tools, not server_tool_use
+    let hasServerToolUse = false;
 
     for (const block of response.content) {
       if (block.type === 'text') {
         textBlocks.push(block.text);
       } else if (block.type === 'tool_use') {
         toolUseBlocks.push(block);
+      } else if (block.type === 'server_tool_use') {
+        // Built-in web search — handled server-side, log it
+        hasServerToolUse = true;
+        toolLog.push({
+          iteration,
+          tool: block.name || 'web_search',
+          input: block.input || {},
+          success: true,
+          timestamp: Date.now(),
+          resultPreview: '(server-side web search)'
+        });
+        console.log(`   🔧 [${iteration}] web_search (server-side) ✓`);
       }
-      // web_search_tool_result blocks are handled automatically by the API
+      // web_search_tool_result blocks are part of the response content — no action needed
     }
 
     // If there are text blocks, accumulate them
@@ -434,12 +401,24 @@ async function runAgenticLoop(options) {
       finalText = textBlocks.join('\n');
     }
 
-    // If stop reason is end_turn or no tool calls, we're done
-    if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
+    // If stop reason is end_turn or no custom tool calls, we're done
+    // (server tool use + web_search_tool_result are already in the response)
+    if (response.stop_reason === 'end_turn' || (toolUseBlocks.length === 0 && !hasServerToolUse)) {
       break;
     }
 
-    // Execute each tool call
+    // If only server tool use (web search) happened, continue the loop
+    // by passing the full response back so the model can use the search results
+    if (toolUseBlocks.length === 0 && hasServerToolUse) {
+      messages.push({ role: 'assistant', content: response.content });
+      // The model needs to continue — no tool_result needed for server tools
+      // But we need a user message to continue the conversation
+      messages.push({ role: 'user', content: 'Continue with the search results above. Proceed with the task.' });
+      continue;
+    }
+
+    // Execute each custom tool call
+    const toolResults = [];
     for (const toolBlock of toolUseBlocks) {
       const logEntry = {
         iteration,
@@ -491,13 +470,14 @@ async function runAgenticLoop(options) {
 // ============================================================================
 // TOOL SUBSETS PER BOT ROLE
 // ============================================================================
+// web_search is always available (built-in server-side tool), not listed here
 const TOOL_SUBSETS = {
-  'research-bot': ['web_fetch', 'web_search', 'api_request', 'store_artifact', 'run_javascript'],
-  'seo-bot': ['web_fetch', 'web_search', 'store_artifact', 'run_javascript'],
-  'writer-bot': ['web_search', 'generate_file', 'store_artifact', 'run_javascript'],
-  'quality-bot': ['web_fetch', 'web_search', 'store_artifact'],
-  // Bounty bots (CEO, CMO, CTO) get all tools
-  'default': ['web_fetch', 'web_search', 'api_request', 'generate_file', 'run_javascript', 'store_artifact']
+  'research-bot': ['web_fetch', 'api_request', 'store_artifact', 'run_javascript'],
+  'seo-bot': ['web_fetch', 'store_artifact', 'run_javascript'],
+  'writer-bot': ['generate_file', 'store_artifact', 'run_javascript'],
+  'quality-bot': ['web_fetch', 'store_artifact'],
+  // Bounty bots (CEO, CMO, CTO) get all custom tools
+  'default': ['web_fetch', 'api_request', 'generate_file', 'run_javascript', 'store_artifact']
 };
 
 function getToolsForBot(botId) {
