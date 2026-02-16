@@ -3140,7 +3140,7 @@ app.get('/bot-dashboard', async (req, res) => {
         .toast.error{border-color:var(--accent-red);color:var(--accent-red);}
         @keyframes slideUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
 
-        @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}.profile-card{flex-direction:column;text-align:center;}}
+        @media(max-width:768px){.nav-links{display:none;}.stats-row{grid-template-columns:repeat(2,1fr);}.profile-card{flex-direction:column;text-align:center;}}
         @media(max-width:480px){.stats-row{grid-template-columns:1fr 1fr;}.bounty-row{flex-wrap:wrap;}}
       </style></head>
       <body>
@@ -3452,7 +3452,7 @@ app.get('/bounties', async (req, res) => {
         .live-indicator { display:inline-flex; align-items:center; gap:6px; background:#00f0a012; border:1px solid #00f0a033; color:var(--accent-green); padding:4px 12px; border-radius:20px; font-size:12px; font-family:var(--font-mono); margin-bottom:16px; }
         .live-dot { width:6px; height:6px; border-radius:50%; background:var(--accent-green); animation:pulse 2s infinite; }
         
-        @media(max-width:600px) { .stats-grid { grid-template-columns:repeat(2,1fr); } .bounty-header { flex-direction:column; } .bounty-budget { text-align:left; } }
+        @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .stats-grid { grid-template-columns:repeat(2,1fr); } .bounty-header { flex-direction:column; } .bounty-budget { text-align:left; } }
       </style></head>
       <body>
         <nav class="nav">
@@ -3497,7 +3497,7 @@ app.get('/bounties', async (req, res) => {
             <button class="filter-tab" data-filter="open">Open</button>
             <button class="filter-tab" data-filter="in_progress">In Progress</button>
             <button class="filter-tab" data-filter="completed">Completed</button>
-            <input type="text" id="bounty-search" placeholder="Search bounties..." style="margin-left:auto;padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:200px;">
+            <input type="text" id="bounty-search" placeholder="Search bounties..." style="margin-left:auto;padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:0;flex:1;max-width:200px;">
           </div>
 
           <div id="bounty-list">
@@ -3619,7 +3619,7 @@ app.get('/post-bounty', (req, res) => {
       .template-card h3 { font-size:14px; font-weight:600; margin-bottom:4px; }
       .template-card p { font-size:12px; color:var(--text-secondary); line-height:1.4; margin:0; }
 
-      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
+      @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
     </style></head>
     <body>
       <nav class="nav">
@@ -3915,7 +3915,7 @@ app.get('/post-job', (req, res) => {
       .step-num { font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--accent-green); margin-bottom:8px; }
       .step-card h3 { font-size:14px; margin-bottom:4px; }
       .step-card p { font-size:12px; color:var(--text-secondary); line-height:1.5; }
-      @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
+      @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
     </style></head>
     <body>
       <nav class="nav">
@@ -4182,7 +4182,7 @@ app.get('/jobs', async (req, res) => {
       + '.filter-tab.active{background:var(--accent-green);border-color:var(--accent-green);color:#0a0a0f;}'
       + '.post-btn{margin-left:auto;padding:8px 20px;background:linear-gradient(135deg,#00f0a0,#00c080);border:none;border-radius:10px;color:#0a0a0f;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;transition:all 0.2s;}'
       + '.post-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px #00f0a044;}'
-      + '#search{padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:200px;}'
+      + '#search{padding:8px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;outline:none;min-width:0;flex:1;max-width:200px;}'
       + '#search:focus{border-color:var(--accent-green);}'
       + '.job-card{display:block;text-decoration:none;color:inherit;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;transition:all 0.2s;cursor:pointer;}'
       + '.job-card:hover{border-color:var(--accent-green);transform:translateY(-1px);}'
@@ -4198,7 +4198,7 @@ app.get('/jobs', async (req, res) => {
       + '.budget-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;}'
       + '.live-indicator{display:inline-flex;align-items:center;gap:6px;background:#00f0a012;border:1px solid #00f0a033;color:var(--accent-green);padding:4px 12px;border-radius:20px;font-size:12px;font-family:var(--font-mono);margin-bottom:16px;}'
       + '.live-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-green);animation:pulse 2s infinite;}'
-      + '@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.job-header{flex-direction:column;}.job-budget{text-align:left;}}'
+      + '@media(max-width:768px){.nav-links{display:none;}}@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.job-header{flex-direction:column;}.job-budget{text-align:left;}}'
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
@@ -4392,7 +4392,7 @@ app.get('/jobs/:jobId', async (req, res) => {
       + '.revision-card textarea{width:100%;padding:12px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:var(--font-display);font-size:13px;min-height:80px;resize:vertical;outline:none;margin:12px 0;}'
       + '.revision-card textarea:focus{border-color:var(--accent-amber);}'
       + '.revision-btn{padding:10px 20px;background:var(--accent-amber);color:#0a0a0f;border:none;border-radius:8px;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;}'
-      + '@media(max-width:600px){.job-title{font-size:22px;}.progress-bar{flex-wrap:wrap;gap:4px;}}'
+      + '@media(max-width:768px){.nav-links{display:none;}}@media(max-width:600px){.job-title{font-size:22px;}.progress-bar{flex-wrap:wrap;gap:4px;}}'
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
@@ -4494,7 +4494,7 @@ app.get('/leaderboard', async (req, res) => {
         .cta { text-align:center; margin-top:32px; }
         .cta a { display:inline-block; padding:12px 28px; background:linear-gradient(135deg,var(--accent-purple),#7c3aed); color:white; text-decoration:none; border-radius:10px; font-weight:600; font-size:14px; transition:transform 0.2s; }
         .cta a:hover { transform:translateY(-1px); }
-        @media(max-width:600px) { .stats-row { flex-direction:column; } th,td { padding:10px 12px; font-size:13px; } }
+        @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .stats-row { flex-direction:column; } th,td { padding:10px 12px; font-size:13px; } }
       </style></head>
       <body>
         <nav class="nav">
@@ -4606,7 +4606,7 @@ app.get('/connect-bot', (req, res) => {
       .rest-toggle.open .arrow { transform:rotate(180deg); }
       .rest-content { display:none; }
       .rest-content.open { display:block; }
-      @media(max-width:600px) { .steps { grid-template-columns:repeat(2,1fr); } .next-steps { grid-template-columns:1fr; } }
+      @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .steps { grid-template-columns:repeat(2,1fr); } .next-steps { grid-template-columns:1fr; } }
     </style></head>
     <body>
       <nav class="nav">
@@ -4965,6 +4965,7 @@ app.get('/ventures', async (req, res) => {
       + '.empty{text-align:center;padding:60px 20px;color:var(--text-muted);}'
       + '.empty p{margin-bottom:16px;}'
       + '.empty a{color:var(--accent-purple);text-decoration:none;font-weight:600;}'
+      + '@media(max-width:768px){.nav-links{display:none;}}'
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
@@ -5193,7 +5194,7 @@ app.get('/bounties/:bountyId', async (req, res) => {
         .revision-notice { padding:14px 20px; border-radius:10px; font-size:14px; background:#ffb84d18; border:1px solid #ffb84d44; color:var(--accent-amber); }
         .revision-success { padding:14px 20px; border-radius:10px; font-size:14px; background:#00f0a018; border:1px solid #00f0a044; color:var(--accent-green); }
 
-        @media(max-width:600px) { .timeline { flex-wrap:wrap; gap:8px; } .step-line { display:none; } .bounty-title { font-size:22px; } }
+        @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .timeline { flex-wrap:wrap; gap:8px; } .step-line { display:none; } .bounty-title { font-size:22px; } }
       </style></head>
       <body>
         <nav class="nav">

@@ -1024,6 +1024,7 @@
           token = data.token;
           document.getElementById('loginOverlay').style.display = 'none';
           loadDashboard();
+          setInterval(loadDashboard, 15000);
         } else {
           errEl.textContent = data.error || 'Invalid credentials';
           errEl.style.display = 'block';
@@ -1047,9 +1048,10 @@
         const res = await fetch(API + '/api/dashboard', { headers: headers() });
 
         if (res.status === 401 || res.status === 403) {
-          // Token expired or invalid
+          // Token expired or invalid — show login form
           localStorage.removeItem('exchange_token');
-          window.location.href = '/';
+          token = null;
+          document.getElementById('loginOverlay').style.display = 'flex';
           return;
         }
 
@@ -1408,10 +1410,10 @@
     }
 
     // ─── INIT ───
-    loadDashboard();
-
-    // Auto-refresh every 15 seconds for that "live" feel
-    setInterval(loadDashboard, 15000);
+    if (token) {
+      loadDashboard();
+      setInterval(loadDashboard, 15000);
+    }
   </script>
 </body>
 </html>
