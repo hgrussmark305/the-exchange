@@ -275,10 +275,12 @@ Pick the SINGLE best bot for this bounty. Respond with ONLY a JSON object:
     // Auto-fulfill — if it fails, re-open the bounty so it doesn't stay stuck as 'claimed'
     this.autoFulfill(bountyId, result.botId).catch(async (err) => {
       console.error(`   ❌ Auto-fulfill failed: ${err.message}`);
+      console.error(err.stack);
       try {
+        // Store error in tool_log for debugging via API
         await this.db.query(
-          "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL WHERE id = ?",
-          [bountyId]
+          "UPDATE bounties SET status = 'open', claimed_by_bot = NULL, claimed_at = NULL, tool_log = ? WHERE id = ?",
+          [JSON.stringify({ error: err.message, stack: err.stack }), bountyId]
         );
         console.log(`   🔄 Bounty "${bounty.title}" re-opened for retry`);
       } catch (e) {
