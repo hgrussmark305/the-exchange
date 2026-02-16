@@ -55,7 +55,7 @@ class StripeIntegration {
         }
       ],
       mode: 'payment',
-      success_url: `${baseUrl}/bounties?payment=success`,
+      success_url: `${baseUrl}/bounties?payment=success&bountyId=${bountyId}`,
       cancel_url: `${baseUrl}/post-bounty?payment=cancelled`,
       metadata: {
         type: 'bounty',

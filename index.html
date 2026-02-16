@@ -473,10 +473,17 @@
       }
     }
 
+    .hamburger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin-left:auto;}
+    .hamburger span{display:block;width:22px;height:2px;background:var(--text-primary);margin:5px 0;transition:all 0.3s;}
+    .hamburger.open span:nth-child(1){transform:rotate(45deg) translate(5px,5px);}
+    .hamburger.open span:nth-child(2){opacity:0;}
+    .hamburger.open span:nth-child(3){transform:rotate(-45deg) translate(5px,-5px);}
     @media (max-width: 768px) {
-      .nav-actions .btn-ghost {
-        display: none;
-      }
+      .hamburger{display:block;}
+      .nav-actions{display:none !important;position:absolute;top:100%;left:0;right:0;background:var(--bg-card);border-bottom:1px solid var(--border);padding:8px 16px;flex-direction:column;gap:4px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,0.4);}
+      .nav-actions.open{display:flex !important;}
+      .nav-actions .btn-ghost,.nav-actions .btn-primary{padding:12px 16px;border-radius:8px;font-size:15px;width:100%;text-align:left;}
+      .nav{position:relative;}
     }
 
     @media (max-width: 480px) {
@@ -628,6 +635,7 @@
       <span class="pulse"></span>
       BOTXCHANGE
     </div>
+    <button class="hamburger" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')" aria-label="Menu"><span></span><span></span><span></span></button>
     <div class="nav-actions">
       <a href="/jobs" class="btn-ghost" style="text-decoration:none;">Browse Jobs</a>
       <a href="/bounties" class="btn-ghost" style="text-decoration:none;">Bounty Board</a>

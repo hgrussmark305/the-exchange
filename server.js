@@ -282,6 +282,28 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 // ============================================================================
+// SHARED: Mobile hamburger menu CSS + JS (injected into all pages)
+// ============================================================================
+const HAMBURGER_CSS = `
+html,body{overflow-x:hidden;}
+.hamburger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin-left:auto;}
+.hamburger span{display:block;width:22px;height:2px;background:var(--text-primary);margin:5px 0;transition:all 0.3s;}
+.hamburger.open span:nth-child(1){transform:rotate(45deg) translate(5px,5px);}
+.hamburger.open span:nth-child(2){opacity:0;}
+.hamburger.open span:nth-child(3){transform:rotate(-45deg) translate(5px,-5px);}
+@media(max-width:768px){
+  .hamburger{display:block;}
+  .nav-links{display:none !important;position:absolute;top:100%;left:0;right:0;background:var(--bg-card);border-bottom:1px solid var(--border);padding:8px 16px;flex-direction:column;gap:4px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,0.4);}
+  .nav-links.open{display:flex !important;}
+  .nav-links a{padding:12px 16px;border-radius:8px;font-size:15px;}
+  .nav{position:relative;}
+}`;
+
+const HAMBURGER_BTN = '<button class="hamburger" onclick="this.classList.toggle(\'open\');this.nextElementSibling.classList.toggle(\'open\')" aria-label="Menu"><span></span><span></span><span></span></button>';
+
+// Hamburger toggle is inline onclick — no extra JS needed
+
+// ============================================================================
 // HOMEPAGE — Server-rendered with live stats and recent jobs
 // ============================================================================
 
@@ -400,10 +422,12 @@ app.get('/', async (req, res) => {
           .stats-row{grid-template-columns:repeat(2,1fr);}
           .nav-links{display:none;}
         }
+        ${HAMBURGER_CSS}
       </style></head>
       <body>
         <nav class="nav">
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+          ${HAMBURGER_BTN}
           <div class="nav-links">
             <a href="/jobs">Browse Jobs</a>
             <a href="/post-job">Post a Job</a>
@@ -2119,6 +2143,27 @@ app.post('/api/bounties/:bountyId/revision', async (req, res) => {
   }
 });
 
+// Admin: activate a stuck pending_payment bounty (when webhook fails)
+app.post('/api/bounties/:bountyId/activate', authenticateToken, async (req, res) => {
+  try {
+    const bounty = await bountyBoard.getBounty(req.params.bountyId);
+    if (!bounty) return res.status(404).json({ error: 'Bounty not found' });
+    if (bounty.status !== 'pending_payment') return res.status(400).json({ error: `Bounty is already ${bounty.status}` });
+
+    await db.query("UPDATE bounties SET status = 'open' WHERE id = ? AND status = 'pending_payment'", [req.params.bountyId]);
+    console.log(`   ✅ Admin activated bounty: "${bounty.title}"`);
+
+    // Trigger matching
+    setTimeout(() => {
+      bountyBoard.autoMatch(req.params.bountyId).catch(err => console.error('Auto-match error:', err.message));
+    }, 3000);
+
+    res.json({ success: true, message: `Bounty "${bounty.title}" activated and queued for matching` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Process next open bounty (one at a time to avoid rate limits)
 app.post('/api/bounties/process-next', authenticateToken, async (req, res) => {
   try {
@@ -3142,10 +3187,12 @@ app.get('/bot-dashboard', async (req, res) => {
 
         @media(max-width:768px){.nav-links{display:none;}.stats-row{grid-template-columns:repeat(2,1fr);}.profile-card{flex-direction:column;text-align:center;}}
         @media(max-width:480px){.stats-row{grid-template-columns:1fr 1fr;}.bounty-row{flex-wrap:wrap;}}
+        ${HAMBURGER_CSS}
       </style></head>
       <body>
         <nav class="nav">
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+          ${HAMBURGER_BTN}
           <div class="nav-links">
             <a href="/bounties">Bounty Board</a>
             <a href="/leaderboard">Leaderboard</a>
@@ -3360,9 +3407,11 @@ app.get('/bot-dashboard', async (req, res) => {
 app.get('/bounties', async (req, res) => {
   try {
     const allBounties = await bountyBoard.getBounties();
-    const bounties = allBounties.filter(b => b.status !== 'pending_payment');
-    const stats = await bountyBoard.getStats();
     const paymentSuccess = req.query.payment === 'success';
+    const paymentBountyId = req.query.bountyId;
+    // Show pending_payment bounties only to the poster (identified by bountyId in URL)
+    const bounties = allBounties.filter(b => b.status !== 'pending_payment' || (paymentBountyId && b.id === paymentBountyId));
+    const stats = await bountyBoard.getStats();
 
     const bountyRows = bounties.map(b => {
       const statusColors = { open: '#00f0a0', claimed: '#ffb84d', completed: '#4d8eff', paid: '#a855f7' };
@@ -3453,10 +3502,12 @@ app.get('/bounties', async (req, res) => {
         .live-dot { width:6px; height:6px; border-radius:50%; background:var(--accent-green); animation:pulse 2s infinite; }
         
         @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .stats-grid { grid-template-columns:repeat(2,1fr); } .bounty-header { flex-direction:column; } .bounty-budget { text-align:left; } }
+        ${HAMBURGER_CSS}
       </style></head>
       <body>
         <nav class="nav">
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+          ${HAMBURGER_BTN}
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/bounties" class="active">Bounty Board</a>
@@ -3467,7 +3518,7 @@ app.get('/bounties', async (req, res) => {
 
         <div class="container">
           <div class="page-header">
-            ${paymentSuccess ? '<div style="padding:14px 20px;border-radius:10px;margin-bottom:16px;font-size:14px;background:#00f0a018;border:1px solid #00f0a044;color:#00f0a0;">Payment successful! Your bounty is now live. A bot will claim it shortly.</div>' : ''}
+            ${paymentSuccess ? '<div style="padding:14px 20px;border-radius:10px;margin-bottom:16px;font-size:14px;background:#00f0a018;border:1px solid #00f0a044;color:#00f0a0;">Payment successful! Your bounty is now live. An AI bot will be matched and begin working on it within minutes. Refresh this page to see progress.</div>' : ''}
             <div class="live-indicator"><span class="live-dot"></span>LIVE — BOTS WORKING</div>
             <h1>Bounty <span>Board</span></h1>
             <p>Real jobs posted with real money. Claimed and fulfilled by autonomous AI bots.</p>
@@ -3620,10 +3671,12 @@ app.get('/post-bounty', (req, res) => {
       .template-card p { font-size:12px; color:var(--text-secondary); line-height:1.4; margin:0; }
 
       @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
+      ${HAMBURGER_CSS}
     </style></head>
     <body>
       <nav class="nav">
         <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+        ${HAMBURGER_BTN}
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/bounties">Bounty Board</a>
@@ -3722,6 +3775,7 @@ app.get('/post-bounty', (req, res) => {
               </div>
             </div>
 
+            <div id="form-error" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:12px;font-size:13px;background:#ff4d4d18;border:1px solid #ff4d4d44;color:#ff6b6b;"></div>
             <button type="submit" class="submit-btn" id="submit-btn">Post & Pay with Stripe</button>
           </form>
         </div>
@@ -3839,12 +3893,16 @@ app.get('/post-bounty', (req, res) => {
             if (data.checkoutUrl) {
               window.location.href = data.checkoutUrl;
             } else {
-              alert(data.error || 'Something went wrong');
+              const errEl = document.getElementById('form-error');
+              errEl.textContent = data.error || 'Something went wrong. Please try again.';
+              errEl.style.display = 'block';
               btn.disabled = false;
               btn.textContent = 'Post & Pay with Stripe';
             }
           } catch (err) {
-            alert('Error: ' + err.message);
+            const errEl = document.getElementById('form-error');
+            errEl.textContent = 'Connection error. Please check your internet and try again.';
+            errEl.style.display = 'block';
             btn.disabled = false;
             btn.textContent = 'Post & Pay with Stripe';
           }
@@ -3916,10 +3974,12 @@ app.get('/post-job', (req, res) => {
       .step-card h3 { font-size:14px; margin-bottom:4px; }
       .step-card p { font-size:12px; color:var(--text-secondary); line-height:1.5; }
       @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .budget-section { flex-direction:column; } .steps { grid-template-columns:1fr; } .template-grid { grid-template-columns:1fr 1fr; } }
+      ${HAMBURGER_CSS}
     </style></head>
     <body>
       <nav class="nav">
         <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+        ${HAMBURGER_BTN}
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/jobs">Browse Jobs</a>
@@ -4199,10 +4259,12 @@ app.get('/jobs', async (req, res) => {
       + '.live-indicator{display:inline-flex;align-items:center;gap:6px;background:#00f0a012;border:1px solid #00f0a033;color:var(--accent-green);padding:4px 12px;border-radius:20px;font-size:12px;font-family:var(--font-mono);margin-bottom:16px;}'
       + '.live-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-green);animation:pulse 2s infinite;}'
       + '@media(max-width:768px){.nav-links{display:none;}}@media(max-width:600px){.stats-grid{grid-template-columns:repeat(2,1fr);}.job-header{flex-direction:column;}.job-budget{text-align:left;}}'
+      + HAMBURGER_CSS
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
       + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
+      + HAMBURGER_BTN
       + '<div class="nav-links">'
       + '<a href="/">Home</a>'
       + '<a href="/jobs" class="active">Browse Jobs</a>'
@@ -4393,10 +4455,12 @@ app.get('/jobs/:jobId', async (req, res) => {
       + '.revision-card textarea:focus{border-color:var(--accent-amber);}'
       + '.revision-btn{padding:10px 20px;background:var(--accent-amber);color:#0a0a0f;border:none;border-radius:8px;font-family:var(--font-display);font-size:13px;font-weight:700;cursor:pointer;}'
       + '@media(max-width:768px){.nav-links{display:none;}}@media(max-width:600px){.job-title{font-size:22px;}.progress-bar{flex-wrap:wrap;gap:4px;}}'
+      + HAMBURGER_CSS
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
       + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
+      + HAMBURGER_BTN
       + '<div class="nav-links">'
       + '<a href="/jobs">Browse Jobs</a>'
       + '<a href="/post-job">Post a Job</a>'
@@ -4495,10 +4559,12 @@ app.get('/leaderboard', async (req, res) => {
         .cta a { display:inline-block; padding:12px 28px; background:linear-gradient(135deg,var(--accent-purple),#7c3aed); color:white; text-decoration:none; border-radius:10px; font-weight:600; font-size:14px; transition:transform 0.2s; }
         .cta a:hover { transform:translateY(-1px); }
         @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .stats-row { flex-direction:column; } th,td { padding:10px 12px; font-size:13px; } }
+        ${HAMBURGER_CSS}
       </style></head>
       <body>
         <nav class="nav">
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+          ${HAMBURGER_BTN}
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/jobs">Browse Jobs</a>
@@ -4519,10 +4585,10 @@ app.get('/leaderboard', async (req, res) => {
             <div class="mini-stat"><div class="val">${leaderboard.length}</div><div class="lbl">Active Bots</div></div>
             <div class="mini-stat"><div class="val">${Math.round(avgQuality * 10) / 10}/10</div><div class="lbl">Avg Quality</div></div>
           </div>
-          ${leaderboard.length ? `<table>
+          ${leaderboard.length ? `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table>
             <thead><tr><th>Rank</th><th>Bot</th><th>Jobs Done</th><th>Earned</th><th>Avg Score</th></tr></thead>
             <tbody>${rows}</tbody>
-          </table>` : '<p style="color:var(--text-secondary);text-align:center;">No bots on the leaderboard yet. <a href="/connect-bot" style="color:var(--accent-purple);">Connect yours</a></p>'}
+          </table></div>` : '<p style="color:var(--text-secondary);text-align:center;">No bots on the leaderboard yet. <a href="/connect-bot" style="color:var(--accent-purple);">Connect yours</a></p>'}
           <div class="cta"><a href="/connect-bot">Connect Your Bot &rarr;</a></div>
         </div>
       </body></html>`);
@@ -4607,10 +4673,12 @@ app.get('/connect-bot', (req, res) => {
       .rest-content { display:none; }
       .rest-content.open { display:block; }
       @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .steps { grid-template-columns:repeat(2,1fr); } .next-steps { grid-template-columns:1fr; } }
+      ${HAMBURGER_CSS}
     </style></head>
     <body>
       <nav class="nav">
         <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+        ${HAMBURGER_BTN}
         <div class="nav-links">
           <a href="/">Home</a>
           <a href="/jobs">Browse Jobs</a>
@@ -4966,10 +5034,12 @@ app.get('/ventures', async (req, res) => {
       + '.empty p{margin-bottom:16px;}'
       + '.empty a{color:var(--accent-purple);text-decoration:none;font-weight:600;}'
       + '@media(max-width:768px){.nav-links{display:none;}}'
+      + HAMBURGER_CSS
       + '</style></head>'
       + '<body>'
       + '<nav class="nav">'
       + '<a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>'
+      + HAMBURGER_BTN
       + '<div class="nav-links">'
       + '<a href="/jobs">Browse Jobs</a>'
       + '<a href="/post-job">Post a Job</a>'
@@ -5195,10 +5265,12 @@ app.get('/bounties/:bountyId', async (req, res) => {
         .revision-success { padding:14px 20px; border-radius:10px; font-size:14px; background:#00f0a018; border:1px solid #00f0a044; color:var(--accent-green); }
 
         @media(max-width:768px) { .nav-links{display:none;} } @media(max-width:600px) { .timeline { flex-wrap:wrap; gap:8px; } .step-line { display:none; } .bounty-title { font-size:22px; } }
+        ${HAMBURGER_CSS}
       </style></head>
       <body>
         <nav class="nav">
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+          ${HAMBURGER_BTN}
           <div class="nav-links">
             <a href="/">Home</a>
             <a href="/bounties" class="active">Bounty Board</a>
