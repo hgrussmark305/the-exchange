@@ -348,8 +348,12 @@ app.get('/', async (req, res) => {
       return '<div class="feed-item"><span class="feed-icon wip">&#9881;</span> <strong>' + escapeHtml(a.title) + '</strong> — ' + a.status.replace('_', ' ') + '</div>';
     }).join('');
 
+    // Count founders for social proof
+    let founderCount = 0;
+    try { founderCount = (await db.query("SELECT COUNT(*) as c FROM founders"))[0].c || 0; } catch(e) {}
+
     res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>BotXchange — AI Work Marketplace</title>
+      <title>BotXchange — Your AI Execution Team</title>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
       <style>
         :root{--bg-primary:#0a0a0f;--bg-card:#12121a;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
@@ -360,9 +364,11 @@ app.get('/', async (req, res) => {
         .nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}
         .nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}
         .nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}
-        .nav-links{display:flex;gap:6px;}
+        .nav-links{display:flex;gap:6px;align-items:center;}
         .nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 14px;border-radius:8px;font-size:13px;transition:all 0.2s;}
         .nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}
+        .nav-links .btn-nav{background:var(--accent-green);color:#0a0a0f;font-weight:600;padding:8px 18px;}
+        .nav-links .btn-nav:hover{background:#00d890;color:#0a0a0f;}
         @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
 
         .hero{text-align:center;padding:100px 20px 60px;position:relative;z-index:1;}
@@ -387,40 +393,22 @@ app.get('/', async (req, res) => {
         .how-card h3{font-size:18px;margin-bottom:8px;}
         .how-card p{color:var(--text-secondary);font-size:14px;line-height:1.6;}
 
-        .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:40px;}
-        .stat-box{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center;}
-        .stat-num{font-family:var(--font-mono);font-size:32px;font-weight:700;}
-        .stat-lbl{color:var(--text-secondary);font-size:12px;text-transform:uppercase;letter-spacing:0.8px;margin-top:4px;}
+        .trust-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+        .trust-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:24px;transition:border-color 0.2s;}
+        .trust-card:hover{border-color:var(--accent-blue);}
+        .trust-card h4{font-size:16px;font-weight:700;margin-bottom:6px;}
+        .trust-card p{color:var(--text-secondary);font-size:13px;line-height:1.6;}
 
-        .recent-card{display:block;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:10px;text-decoration:none;color:inherit;transition:all 0.2s;}
-        .recent-card:hover{border-color:var(--accent-green);transform:translateY(-1px);}
-        .rc-title{font-weight:600;font-size:15px;margin-bottom:6px;}
-        .rc-meta{display:flex;gap:12px;font-size:12px;color:var(--text-muted);}
-        .rc-score{color:var(--accent-green);font-family:var(--font-mono);font-weight:600;}
-        .rc-budget{font-family:var(--font-mono);color:var(--accent-amber);}
-
-        .bot-owner-section{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:48px;text-align:center;margin-top:20px;}
-        .bot-owner-section h2{font-size:24px;font-weight:800;margin-bottom:8px;}
-        .bot-owner-section .sub{color:var(--text-secondary);font-size:15px;margin-bottom:24px;max-width:500px;margin-left:auto;margin-right:auto;}
-        .mcp-code{background:#0a0a0f;border:1px solid var(--border);border-radius:12px;padding:20px;font-family:var(--font-mono);font-size:12px;text-align:left;max-width:480px;margin:0 auto 24px;color:var(--text-secondary);line-height:1.6;overflow-x:auto;}
-        .mcp-code .key{color:var(--accent-purple);}
-        .mcp-code .val{color:var(--accent-green);}
-
-        .feed-section{margin-top:20px;}
-        .feed-item{padding:10px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;font-size:13px;color:var(--text-secondary);}
-        .feed-item strong{color:var(--text-primary);}
-        .feed-icon{display:inline-block;width:18px;text-align:center;margin-right:4px;}
-        .feed-icon.done{color:var(--accent-green);}
-        .feed-icon.wip{color:var(--accent-amber);}
+        .founder-section{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:48px;text-align:center;margin-top:20px;}
+        .founder-section h2{font-size:24px;font-weight:800;margin-bottom:8px;}
+        .founder-section .sub{color:var(--text-secondary);font-size:15px;margin-bottom:24px;max-width:500px;margin-left:auto;margin-right:auto;line-height:1.6;}
 
         .footer{text-align:center;padding:40px 20px;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border);}
         .footer a{color:var(--accent-purple);text-decoration:none;}
 
         @media(max-width:768px){
           .hero h1{font-size:32px;}
-          .how-grid{grid-template-columns:1fr;}
-          .stats-row{grid-template-columns:repeat(2,1fr);}
-          .nav-links{display:none;}
+          .how-grid,.trust-grid{grid-template-columns:1fr;}
         }
         ${HAMBURGER_CSS}
       </style></head>
@@ -429,176 +417,79 @@ app.get('/', async (req, res) => {
           <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
           ${HAMBURGER_BTN}
           <div class="nav-links">
-            <a href="/jobs">Browse Jobs</a>
-            <a href="/post-job">Post a Job</a>
-            <a href="/leaderboard">Leaderboard</a>
-            <a href="/ventures">Ventures</a>
-            <a href="/connect-bot">Connect Bot</a>
-            <a href="/dashboard.html" id="dashLink" onclick="if(!localStorage.getItem('exchange_token')){event.preventDefault();openLogin();}">Log In</a>
+            <a href="#how-it-works">How It Works</a>
+            <a href="/app/dashboard">Dashboard</a>
+            <a href="/app/login">Log In</a>
+            <a href="/app/signup" class="btn-nav">Get Started</a>
           </div>
         </nav>
 
         <div class="hero">
-          <h1>The <span class="green">AI Work</span><br><span class="purple">Marketplace</span></h1>
-          <p>Post a job. Specialized AI bots collaborate to deliver. Quality-checked. Pay only if it's good.</p>
+          <h1>Your <span class="green">AI Execution</span><br><span class="purple">Team</span></h1>
+          <p>Tell us your business. We'll build your team. They start working today.</p>
           <div class="hero-ctas">
-            <a href="/post-job" class="btn-primary">Post a Job</a>
-            <a href="/connect-bot" class="btn-secondary">Connect Your Bot</a>
+            <a href="/app/signup" class="btn-primary">Get Started Free</a>
+            <a href="#how-it-works" class="btn-secondary">See How It Works</a>
           </div>
         </div>
 
-        <div class="section">
+        <div class="section" id="how-it-works">
           <div class="section-title">How It Works</div>
-          <div class="section-sub">Three steps to quality AI-produced deliverables</div>
+          <div class="section-sub">From signup to outbound revenue in 5 minutes</div>
           <div class="how-grid">
             <div class="how-card">
               <div class="how-num">1</div>
-              <h3>Post your job</h3>
-              <p>Describe what you need and set your budget. Choose from templates or write your own. Pay securely via Stripe.</p>
+              <h3>Describe your business</h3>
+              <p>Tell us what you sell and who you sell to. Takes 5 minutes. No workflows to design, no tools to wire.</p>
             </div>
             <div class="how-card">
               <div class="how-num">2</div>
-              <h3>Bots collaborate</h3>
-              <p>AI analyzes your job and assigns specialized bots. Each contributes their expertise — research, writing, SEO, code.</p>
+              <h3>Meet your team</h3>
+              <p>We create a 5-person AI execution team: Research, Messaging, Quality, Outreach, and Operations.</p>
             </div>
             <div class="how-card">
               <div class="how-num">3</div>
-              <h3>Review & pay</h3>
-              <p>Quality-checked deliverable delivered fast. Request a free revision if not satisfied. Bots only get paid if you're happy.</p>
+              <h3>Watch them work</h3>
+              <p>Your team researches prospects, writes personalized outreach, and sends emails. You approve key decisions.</p>
             </div>
           </div>
         </div>
 
         <div class="section">
-          <div class="section-title">Live Stats</div>
-          <div class="section-sub">Real numbers from the platform right now</div>
-          <div class="stats-row">
-            <div class="stat-box">
-              <div class="stat-num" style="color:var(--accent-purple);">${totalCompleted}</div>
-              <div class="stat-lbl">Jobs Completed</div>
+          <div class="section-title">Built for Trust</div>
+          <div class="section-sub">Full transparency, total control</div>
+          <div class="trust-grid">
+            <div class="trust-card">
+              <h4 style="color:var(--accent-green);">You control the budget</h4>
+              <p>Hard spending ceilings. Pay only for what's used. Auto-pause if you run out of credits.</p>
             </div>
-            <div class="stat-box">
-              <div class="stat-num" style="color:var(--accent-green);">$${(totalPaid / 100).toFixed(2)}</div>
-              <div class="stat-lbl">Paid to Bots</div>
+            <div class="trust-card">
+              <h4 style="color:var(--accent-blue);">Every action has proof</h4>
+              <p>Evidence drawer shows intent, artifact, and receipt for every agent action. Full audit trail.</p>
             </div>
-            <div class="stat-box">
-              <div class="stat-num" style="color:var(--accent-blue);">${activeBots}</div>
-              <div class="stat-lbl">Active Bots</div>
+            <div class="trust-card">
+              <h4 style="color:var(--accent-amber);">One-click pause</h4>
+              <p>Kill switch stops everything instantly. Resume when you're ready. Always in control.</p>
             </div>
-            <div class="stat-box">
-              <div class="stat-num" style="color:var(--accent-amber);">${avgQuality}/10</div>
-              <div class="stat-lbl">Avg Quality</div>
+            <div class="trust-card">
+              <h4 style="color:var(--accent-purple);">Pay only for results</h4>
+              <p>5% of revenue you actually earn. Credits cover agent costs. No monthly fees.</p>
             </div>
           </div>
-
-          ${recentHtml ? '<div class="section-title" style="font-size:20px;">Recent Completed Jobs</div><div class="section-sub">Social proof that the system works</div>' + recentHtml : ''}
-
-          ${activityHtml ? '<div class="feed-section"><div class="section-title" style="font-size:20px;">Activity Feed</div><div class="section-sub">Live platform activity</div>' + activityHtml + '</div>' : ''}
         </div>
 
         <div class="section">
-          <div class="bot-owner-section">
-            <h2>Give Your AI an Income</h2>
-            <div class="sub">Connect via MCP in 60 seconds. Your bot browses jobs, claims work, delivers, and earns real money.</div>
-            <div class="mcp-code">
-{<br>
-&nbsp;&nbsp;<span class="key">"mcpServers"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"exchange"</span>: {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"command"</span>: <span class="val">"npx"</span>,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"args"</span>: [<span class="val">"exchange-economy-mcp"</span>],<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"env"</span>: { <span class="key">"EXCHANGE_API_KEY"</span>: <span class="val">"your_key"</span> }<br>
-&nbsp;&nbsp;&nbsp;&nbsp;}<br>
-&nbsp;&nbsp;}<br>
-}
-            </div>
-            <a href="/connect-bot" class="btn-primary">Connect Your Bot &rarr;</a>
+          <div class="founder-section">
+            <h2>Built for Overwhelmed Founders</h2>
+            <div class="sub">You're already building your product. Let your AI team handle outbound while you focus on what matters. No workflows to design. No tools to wire. No agents to manage.</div>
+            <a href="/app/signup" class="btn-primary">Get Started Free</a>
           </div>
         </div>
 
         <div class="footer">
-          <p>BotXchange &mdash; The economic infrastructure layer for AI agents</p>
-          <p style="margin-top:8px;"><a href="/jobs">Browse Jobs</a> &middot; <a href="/post-job">Post a Job</a> &middot; <a href="/connect-bot">Connect Bot</a> &middot; <a href="/leaderboard">Leaderboard</a> &middot; <a href="/ventures">Ventures</a></p>
+          <p>BotXchange &mdash; Your AI Execution Team</p>
+          <p style="margin-top:8px;"><a href="/app/signup">Get Started</a> &middot; <a href="#how-it-works">How It Works</a> &middot; <a href="/app/login">Log In</a> &middot; <a href="/app/dashboard">Dashboard</a></p>
         </div>
-
-        <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:200;align-items:center;justify-content:center;">
-          <div style="background:#12121a;border:1px solid #1e1e2e;border-radius:16px;padding:36px;width:90%;max-width:400px;position:relative;">
-            <button onclick="closeLogin()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:#4a4a5e;font-size:20px;cursor:pointer;">&times;</button>
-            <h2 style="font-size:22px;font-weight:700;margin-bottom:6px;" id="modalTitle">Log In</h2>
-            <p style="color:#7a7a8e;font-size:13px;margin-bottom:24px;" id="modalSub">Welcome back to BotXchange</p>
-            <div id="signupFields" style="display:none;margin-bottom:14px;">
-              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Username</label>
-              <input id="inputUsername" type="text" placeholder="botmaster42" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;">
-            </div>
-            <div style="margin-bottom:14px;">
-              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Email</label>
-              <input id="inputEmail" type="email" placeholder="you@example.com" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;">
-            </div>
-            <div style="margin-bottom:20px;">
-              <label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#4a4a5e;margin-bottom:6px;font-weight:600;">Password</label>
-              <input id="inputPassword" type="password" placeholder="••••••••" style="width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;color:#e8e8ef;font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')handleAuth()">
-            </div>
-            <button onclick="handleAuth()" style="width:100%;padding:12px;background:#00f0a0;border:none;color:#0a0a0f;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;" id="authBtn">Log In</button>
-            <p style="text-align:center;margin-top:14px;font-size:13px;color:#7a7a8e;" id="authSwitch">Don't have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Sign up</a></p>
-            <p id="authError" style="color:#ff4d6a;font-size:12px;text-align:center;margin-top:10px;display:none;"></p>
-          </div>
-        </div>
-
-        <script>
-          let authMode = 'login';
-          const token = localStorage.getItem('exchange_token');
-          const dashLink = document.getElementById('dashLink');
-          if (token) {
-            dashLink.textContent = 'Dashboard';
-            dashLink.href = '/dashboard.html';
-            dashLink.onclick = null;
-          }
-          function openLogin() {
-            const m = document.getElementById('authModal');
-            m.style.display = 'flex';
-          }
-          function closeLogin() {
-            document.getElementById('authModal').style.display = 'none';
-          }
-          document.getElementById('authModal').addEventListener('click', function(e) {
-            if (e.target === this) closeLogin();
-          });
-          function toggleMode() {
-            authMode = authMode === 'login' ? 'signup' : 'login';
-            document.getElementById('modalTitle').textContent = authMode === 'signup' ? 'Create Account' : 'Log In';
-            document.getElementById('modalSub').textContent = authMode === 'signup' ? 'Deploy your first bot in 60 seconds' : 'Welcome back to BotXchange';
-            document.getElementById('signupFields').style.display = authMode === 'signup' ? 'block' : 'none';
-            document.getElementById('authBtn').textContent = authMode === 'signup' ? 'Create Account' : 'Log In';
-            document.getElementById('authSwitch').innerHTML = authMode === 'signup'
-              ? 'Already have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Log in</a>'
-              : 'Don\\'t have an account? <a onclick="toggleMode()" style="color:#00f0a0;cursor:pointer;">Sign up</a>';
-          }
-          async function handleAuth() {
-            const email = document.getElementById('inputEmail').value;
-            const password = document.getElementById('inputPassword').value;
-            const errEl = document.getElementById('authError');
-            errEl.style.display = 'none';
-            if (!email || !password) { errEl.textContent = 'Please fill in all fields'; errEl.style.display = 'block'; return; }
-            const endpoint = authMode === 'signup' ? '/api/auth/register' : '/api/auth/login';
-            const body = authMode === 'signup'
-              ? { email, password, username: document.getElementById('inputUsername').value }
-              : { email, password };
-            try {
-              const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-              const data = await res.json();
-              if (data.token) {
-                localStorage.setItem('exchange_token', data.token);
-                localStorage.setItem('exchange_user', JSON.stringify(data.user || { email }));
-                window.location.href = '/dashboard.html';
-              } else {
-                errEl.textContent = data.error || 'Authentication failed';
-                errEl.style.display = 'block';
-              }
-            } catch (e) {
-              errEl.textContent = 'Connection error';
-              errEl.style.display = 'block';
-            }
-          }
-        </script>
       </body></html>`);
   } catch (error) {
     // Fallback to static index.html
@@ -5353,6 +5244,1052 @@ app.get('/bounties/:bountyId', async (req, res) => {
   } catch (error) {
     res.status(500).send('Error loading bounty');
   }
+});
+
+// ============================================================================
+// BOTXCHANGE PIVOT: Founder Execution Platform Routes
+// ============================================================================
+
+const { createVentureAgents, getAgent } = require('./agents');
+
+// Founder auth middleware (separate from old human auth)
+const authenticateFounder = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Access token required' });
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Invalid token' });
+    if (!user.founderId) return res.status(403).json({ error: 'Not a founder account' });
+    req.founder = user;
+    next();
+  });
+};
+
+// ── Founder Auth ─────────────────────────────────────────────────────────────
+
+app.post('/api/founders/signup', async (req, res) => {
+  try {
+    const { email, password, businessName } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+    const existing = await db.query('SELECT id FROM founders WHERE email = ?', [email]);
+    if (existing.length) return res.status(400).json({ error: 'Account already exists' });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const founderId = require('uuid').v4();
+
+    await db.run(
+      `INSERT INTO founders (id, email, password_hash, name, created_at, last_active_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [founderId, email, passwordHash, businessName || '', Date.now(), Date.now()]
+    );
+
+    const token = jwt.sign({ founderId, email }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ success: true, token, founder: { id: founderId, email, name: businessName } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/founders/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const founders = await db.query('SELECT * FROM founders WHERE email = ?', [email]);
+    if (!founders.length) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const founder = founders[0];
+    const valid = await bcrypt.compare(password, founder.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+    await db.run('UPDATE founders SET last_active_at = ? WHERE id = ?', [Date.now(), founder.id]);
+    const token = jwt.sign({ founderId: founder.id, email: founder.email }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({
+      success: true, token,
+      founder: { id: founder.id, email: founder.email, name: founder.name },
+      onboarding_completed: !!founder.onboarding_completed_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Founder Onboarding API ──────────────────────────────────────────────────
+
+app.post('/api/founders/onboarding', authenticateFounder, async (req, res) => {
+  try {
+    const { step, data } = req.body;
+    const founderId = req.founder.founderId;
+
+    switch (step) {
+      case 'business':
+        await db.run(
+          'UPDATE founders SET business_description = ?, offer = ? WHERE id = ?',
+          [data.businessDescription, data.offer, founderId]
+        );
+        break;
+      case 'icp':
+        await db.run(
+          'UPDATE founders SET icp = ? WHERE id = ?',
+          [JSON.stringify(data), founderId]
+        );
+        break;
+      case 'brand':
+        await db.run(
+          'UPDATE founders SET brand_constraints = ? WHERE id = ?',
+          [JSON.stringify(data), founderId]
+        );
+        break;
+      case 'email':
+        await db.run(
+          'UPDATE founders SET email_provider = ?, email_provider_config = ?, sending_domain = ?, domain_warmup_confirmed = ? WHERE id = ?',
+          [data.provider, data.config ? JSON.stringify(data.config) : null, data.sendingDomain, data.warmupConfirmed ? 1 : 0, founderId]
+        );
+        break;
+      case 'budget':
+        await db.run(
+          'UPDATE founders SET monthly_spend_ceiling_cents = ? WHERE id = ?',
+          [data.ceilingCents || 20000, founderId]
+        );
+        break;
+      default:
+        return res.status(400).json({ error: 'Unknown onboarding step' });
+    }
+    res.json({ success: true, step });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/founders/launch', authenticateFounder, async (req, res) => {
+  try {
+    const founderId = req.founder.founderId;
+    const founder = (await db.query('SELECT * FROM founders WHERE id = ?', [founderId]))[0];
+    if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
+    // Check if venture already exists
+    const existing = await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [founderId]);
+    if (existing.length) return res.status(400).json({ error: 'Venture already exists' });
+
+    const ventureId = require('uuid').v4();
+    const vName = founder.name || 'My Venture';
+
+    // Create venture
+    await db.run(
+      `INSERT INTO founder_ventures (id, founder_id, name, status, daily_email_limit, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+      [ventureId, founderId, vName, founder.domain_warmup_confirmed ? 25 : 10, Date.now(), Date.now()]
+    );
+
+    // Create 5 agents
+    await createVentureAgents(db, ventureId);
+
+    // Populate vision memory from onboarding data
+    let icp, brand;
+    try { icp = JSON.parse(founder.icp || '{}'); } catch { icp = {}; }
+    try { brand = JSON.parse(founder.brand_constraints || '{}'); } catch { brand = {}; }
+
+    const visionMemory = [
+      { key: 'business_description', value: founder.business_description || '' },
+      { key: 'offer', value: founder.offer || '' },
+      { key: 'icp', value: founder.icp || '{}' },
+      { key: 'brand_tone', value: brand.tone || 'Professional' },
+      { key: 'forbidden_claims', value: brand.forbidden_claims || '' },
+      { key: 'proof_points', value: brand.proof_requirements || '' }
+    ];
+
+    for (const mem of visionMemory) {
+      await db.run(
+        `INSERT INTO venture_memory (id, venture_id, layer, key, value, writable_by, source, created_at, updated_at)
+         VALUES (?, ?, 'vision', ?, ?, 'founder', 'onboarding', ?, ?)`,
+        [require('uuid').v4(), ventureId, mem.key, mem.value, Date.now(), Date.now()]
+      );
+    }
+
+    // Initialize performance memory
+    const perfMemory = [
+      { key: 'avg_reply_rate', value: '0' },
+      { key: 'best_subject_line', value: '' },
+      { key: 'optimal_send_time', value: '9:00 AM' },
+      { key: 'emails_per_day_target', value: founder.domain_warmup_confirmed ? '25' : '10' }
+    ];
+
+    for (const mem of perfMemory) {
+      await db.run(
+        `INSERT INTO venture_memory (id, venture_id, layer, key, value, writable_by, source, created_at, updated_at)
+         VALUES (?, ?, 'performance', ?, ?, 'system', 'init', ?, ?)`,
+        [require('uuid').v4(), ventureId, mem.key, mem.value, Date.now(), Date.now()]
+      );
+    }
+
+    // Mark onboarding complete
+    await db.run('UPDATE founders SET onboarding_completed_at = ? WHERE id = ?', [Date.now(), founderId]);
+
+    // Log activity
+    await db.run(
+      `INSERT INTO activity_log (id, venture_id, event_type, message, created_at)
+       VALUES (?, ?, 'venture_launched', 'Venture launched — your AI team is ready', ?)`,
+      [require('uuid').v4(), ventureId, Date.now()]
+    );
+
+    res.json({ success: true, ventureId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Dashboard API ──────────────────────────────────────────────────────────
+
+app.get('/api/founders/dashboard', authenticateFounder, async (req, res) => {
+  try {
+    const founderId = req.founder.founderId;
+    const founder = (await db.query('SELECT * FROM founders WHERE id = ?', [founderId]))[0];
+    if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
+    const venture = (await db.query('SELECT * FROM founder_ventures WHERE founder_id = ?', [founderId]))[0];
+    if (!venture) return res.json({ founder: { id: founder.id, email: founder.email, name: founder.name }, venture: null });
+
+    const agents = await db.query('SELECT * FROM execution_agents WHERE venture_id = ?', [venture.id]);
+    const activities = await db.query(
+      'SELECT * FROM activity_log WHERE venture_id = ? ORDER BY created_at DESC LIMIT 50',
+      [venture.id]
+    );
+    const pendingApprovals = await db.query(
+      "SELECT t.*, a.display_name as agent_name FROM execution_tasks t JOIN execution_agents a ON t.agent_id = a.id WHERE t.venture_id = ? AND t.status = 'review'",
+      [venture.id]
+    );
+
+    res.json({
+      founder: { id: founder.id, email: founder.email, name: founder.name, credit_balance_cents: founder.credit_balance_cents, monthly_spend_ceiling_cents: founder.monthly_spend_ceiling_cents },
+      venture,
+      agents,
+      activities,
+      pendingApprovals
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Activity Feed ─────────────────────────────────────────────────────────
+
+app.get('/api/founders/activity', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.json({ activities: [] });
+
+    const activities = await db.query(
+      'SELECT * FROM activity_log WHERE venture_id = ? ORDER BY created_at DESC LIMIT 100',
+      [venture.id]
+    );
+    res.json({ activities });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Evidence Drawer ──────────────────────────────────────────────────────
+
+app.get('/api/founders/tasks/:taskId', authenticateFounder, async (req, res) => {
+  try {
+    const task = (await db.query(
+      `SELECT t.*, a.display_name as agent_name, a.role as agent_role
+       FROM execution_tasks t JOIN execution_agents a ON t.agent_id = a.id WHERE t.id = ?`,
+      [req.params.taskId]
+    ))[0];
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    res.json(task);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Approval Actions ──────────────────────────────────────────────────────
+
+app.post('/api/founders/approve/:taskId', authenticateFounder, async (req, res) => {
+  try {
+    const now = Date.now();
+    await db.run(
+      "UPDATE execution_tasks SET status = 'approved', approved_by = 'founder', approved_at = ? WHERE id = ? AND status = 'review'",
+      [now, req.params.taskId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/founders/reject/:taskId', authenticateFounder, async (req, res) => {
+  try {
+    await db.run(
+      "UPDATE execution_tasks SET status = 'rejected' WHERE id = ? AND status = 'review'",
+      [req.params.taskId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/founders/approve-all', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+    const now = Date.now();
+    const result = await db.run(
+      "UPDATE execution_tasks SET status = 'approved', approved_by = 'founder', approved_at = ? WHERE venture_id = ? AND status = 'review'",
+      [now, venture.id]
+    );
+    res.json({ success: true, approved: result.changes });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Kill Switch ──────────────────────────────────────────────────────────
+
+app.post('/api/founders/kill-switch', authenticateFounder, async (req, res) => {
+  try {
+    const { active } = req.body;
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+
+    await db.run('UPDATE founder_ventures SET kill_switch_active = ? WHERE id = ?', [active ? 1 : 0, venture.id]);
+
+    if (active) {
+      // Cancel in-progress tasks
+      await db.run("UPDATE execution_tasks SET status = 'cancelled' WHERE venture_id = ? AND status IN ('in_progress', 'approved')", [venture.id]);
+      await db.run("UPDATE execution_agents SET status = 'idle', current_task = NULL WHERE venture_id = ?", [venture.id]);
+      await db.run(
+        `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'kill_switch', 'Kill switch activated — all activity paused', ?)`,
+        [require('uuid').v4(), venture.id, Date.now()]
+      );
+    } else {
+      await db.run(
+        `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'kill_switch', 'Kill switch deactivated — activity resumed', ?)`,
+        [require('uuid').v4(), venture.id, Date.now()]
+      );
+    }
+
+    res.json({ success: true, kill_switch_active: active });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Run Agent Execution ──────────────────────────────────────────────────
+
+app.post('/api/founders/run-research', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT * FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+    if (venture.kill_switch_active) return res.status(400).json({ error: 'Kill switch is active' });
+
+    const agent = getAgent(db, venture, 'research');
+    const researchAgentRow = (await db.query("SELECT id FROM execution_agents WHERE venture_id = ? AND role = 'research'", [venture.id]))[0];
+    const taskId = require('uuid').v4();
+    await db.run(
+      `INSERT INTO execution_tasks (id, venture_id, agent_id, title, task_type, requires_approval, created_at)
+       VALUES (?, ?, ?, 'Find new prospects', 'research', 0, ?)`,
+      [taskId, venture.id, researchAgentRow.id, Date.now()]
+    );
+
+    const task = { id: taskId, venture_id: venture.id, agent_id: researchAgentRow.id, title: 'Find new prospects', task_type: 'research', requires_approval: 0 };
+    const result = await agent.executeTask(task);
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/founders/run-daily', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT * FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+
+    const ops = new (require('./agents').OpsAgent)(db, venture);
+    const result = await ops.runDailyExecution();
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Prospects API ──────────────────────────────────────────────────────────
+
+app.get('/api/founders/prospects', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.json({ prospects: [] });
+    const prospects = await db.query('SELECT * FROM prospects WHERE venture_id = ? ORDER BY created_at DESC', [venture.id]);
+    res.json({ prospects });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Revenue Events ──────────────────────────────────────────────────────
+
+app.post('/api/founders/revenue', authenticateFounder, async (req, res) => {
+  try {
+    const { prospectId, amountCents } = req.body;
+    const venture = (await db.query('SELECT * FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+
+    const platformTake = Math.round(amountCents * venture.platform_take_rate);
+    const eventId = require('uuid').v4();
+
+    await db.run(
+      `INSERT INTO revenue_events (id, venture_id, prospect_id, amount_cents, attribution_type, platform_take_cents, status, created_at)
+       VALUES (?, ?, ?, ?, 'founder_confirmed', ?, 'confirmed', ?)`,
+      [eventId, venture.id, prospectId || null, amountCents, platformTake, Date.now()]
+    );
+
+    await db.run(
+      'UPDATE founder_ventures SET total_revenue_cents = total_revenue_cents + ?, total_platform_revenue_cents = total_platform_revenue_cents + ?, total_deals_closed = total_deals_closed + 1 WHERE id = ?',
+      [amountCents, platformTake, venture.id]
+    );
+
+    if (prospectId) {
+      await db.run("UPDATE prospects SET outreach_status = 'closed_won' WHERE id = ?", [prospectId]);
+    }
+
+    await db.run(
+      `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'deal_closed', ?, ?)`,
+      [require('uuid').v4(), venture.id, `Deal closed! $${(amountCents / 100).toFixed(2)} revenue recorded`, Date.now()]
+    );
+
+    res.json({ success: true, revenue_event_id: eventId, platform_take_cents: platformTake });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Credits API ──────────────────────────────────────────────────────────
+
+app.post('/api/founders/add-credits', authenticateFounder, async (req, res) => {
+  try {
+    const { amountCents } = req.body;
+    if (!amountCents || amountCents < 2500) return res.status(400).json({ error: 'Minimum $25' });
+
+    const founderId = req.founder.founderId;
+    const founder = (await db.query('SELECT credit_balance_cents FROM founders WHERE id = ?', [founderId]))[0];
+    const newBalance = (founder?.credit_balance_cents || 0) + amountCents;
+
+    await db.run(
+      'UPDATE founders SET credit_balance_cents = ?, total_credits_purchased_cents = total_credits_purchased_cents + ? WHERE id = ?',
+      [newBalance, amountCents, founderId]
+    );
+
+    await db.run(
+      `INSERT INTO credit_transactions (id, founder_id, amount_cents, balance_after_cents, description, transaction_type, created_at)
+       VALUES (?, ?, ?, ?, 'Credit purchase', 'purchase', ?)`,
+      [require('uuid').v4(), founderId, amountCents, newBalance, Date.now()]
+    );
+
+    // If kill switch was triggered by zero credits, reactivate
+    const venture = (await db.query('SELECT id, kill_switch_active FROM founder_ventures WHERE founder_id = ?', [founderId]))[0];
+    if (venture && venture.kill_switch_active) {
+      await db.run('UPDATE founder_ventures SET kill_switch_active = 0 WHERE id = ?', [venture.id]);
+    }
+
+    res.json({ success: true, credit_balance_cents: newBalance });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Memory API ──────────────────────────────────────────────────────────
+
+app.get('/api/founders/memory', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.json({ memory: [] });
+    const memory = await db.query('SELECT * FROM venture_memory WHERE venture_id = ? ORDER BY layer, key', [venture.id]);
+    res.json({ memory });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/founders/memory/:memoryId', authenticateFounder, async (req, res) => {
+  try {
+    const { value } = req.body;
+    await db.run(
+      "UPDATE venture_memory SET value = ?, updated_at = ? WHERE id = ? AND writable_by = 'founder'",
+      [value, Date.now(), req.params.memoryId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// BOTXCHANGE PIVOT: Server-rendered pages
+// ============================================================================
+
+const PIVOT_CSS = `
+:root{--bg-primary:#0a0a0f;--bg-card:#12121a;--bg-card-hover:#1a1a28;--border:#1e1e2e;--text-primary:#e8e8ef;--text-secondary:#7a7a8e;--text-muted:#4a4a5e;--accent-green:#00f0a0;--accent-blue:#4d8eff;--accent-amber:#ffb84d;--accent-purple:#a855f7;--accent-red:#ff4d6a;--font-display:'Sora',sans-serif;--font-mono:'JetBrains Mono',monospace;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font-display);background:var(--bg-primary);color:var(--text-primary);min-height:100vh;overflow-x:hidden;}
+body::before{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:700px;background:radial-gradient(ellipse,#00f0a015 0%,#a855f710 40%,transparent 70%);pointer-events:none;z-index:0;}
+.nav{position:sticky;top:0;z-index:100;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);}
+.nav-logo{font-family:var(--font-mono);font-weight:700;font-size:16px;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text-primary);}
+.nav-logo .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent-green);box-shadow:0 0 12px var(--accent-green);animation:pulse 2s infinite;}
+.nav-links{display:flex;gap:6px;align-items:center;}
+.nav-links a{color:var(--text-secondary);text-decoration:none;padding:8px 14px;border-radius:8px;font-size:13px;transition:all 0.2s;}
+.nav-links a:hover{color:var(--text-primary);background:#1e1e2e;}
+.nav-links .btn-nav{background:var(--accent-green);color:#0a0a0f;font-weight:600;padding:8px 18px;}
+.nav-links .btn-nav:hover{background:#00d890;color:#0a0a0f;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+.btn-primary{display:inline-flex;align-items:center;gap:8px;padding:14px 28px;background:linear-gradient(135deg,#00f0a0,#00c080);color:#0a0a0f;font-weight:700;font-size:15px;border-radius:12px;text-decoration:none;border:none;cursor:pointer;transition:all 0.2s;font-family:var(--font-display);}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 24px #00f0a044;}
+.btn-secondary{display:inline-flex;align-items:center;gap:8px;padding:14px 28px;background:transparent;border:1px solid var(--border);color:var(--text-primary);font-weight:600;font-size:15px;border-radius:12px;text-decoration:none;cursor:pointer;transition:all 0.2s;font-family:var(--font-display);}
+.btn-secondary:hover{border-color:var(--accent-purple);color:var(--accent-purple);}
+.btn-danger{background:var(--accent-red);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;font-family:var(--font-display);}
+.btn-danger:hover{opacity:0.9;}
+.btn-small{padding:8px 16px;font-size:12px;border-radius:8px;}
+input,textarea,select{width:100%;padding:12px 14px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none;font-family:var(--font-display);}
+input:focus,textarea:focus,select:focus{border-color:var(--accent-green);}
+textarea{resize:vertical;min-height:80px;}
+label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:6px;font-weight:600;}
+.form-group{margin-bottom:18px;}
+.footer{text-align:center;padding:40px 20px;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border);}
+${HAMBURGER_CSS}
+@media(max-width:768px){.nav-links{display:none !important;}.nav-links.open{display:flex !important;}}
+`;
+
+const PIVOT_NAV = `
+<nav class="nav">
+  <a href="/" class="nav-logo"><span class="pulse"></span>BOTXCHANGE</a>
+  ${HAMBURGER_BTN}
+  <div class="nav-links">
+    <a href="/#how-it-works">How It Works</a>
+    <a href="/app/dashboard">Dashboard</a>
+    <a href="/app/login">Log In</a>
+    <a href="/app/signup" class="btn-nav">Get Started</a>
+  </div>
+</nav>`;
+
+// ── Signup Page ──────────────────────────────────────────────────────────
+
+app.get('/app/signup', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Sign Up — BotXchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>${PIVOT_CSS}
+      .signup-wrap{max-width:440px;margin:80px auto;padding:0 20px;}
+      .signup-card{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:40px 32px;}
+      .signup-card h1{font-size:28px;font-weight:800;margin-bottom:6px;letter-spacing:-1px;}
+      .signup-card .sub{color:var(--text-secondary);font-size:14px;margin-bottom:32px;}
+      .error-msg{color:var(--accent-red);font-size:12px;margin-top:8px;display:none;}
+    </style></head><body>
+    ${PIVOT_NAV}
+    <div class="signup-wrap">
+      <div class="signup-card">
+        <h1>Get Started</h1>
+        <p class="sub">Create your account and meet your AI team</p>
+        <div class="form-group"><label>Business Name</label><input id="bizName" type="text" placeholder="Acme Corp"></div>
+        <div class="form-group"><label>Email</label><input id="email" type="email" placeholder="you@company.com"></div>
+        <div class="form-group"><label>Password</label><input id="password" type="password" placeholder="Min 6 characters" onkeydown="if(event.key==='Enter')doSignup()"></div>
+        <button onclick="doSignup()" class="btn-primary" style="width:100%;justify-content:center;" id="signupBtn">Create Account</button>
+        <p class="error-msg" id="errMsg"></p>
+        <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-secondary);">Already have an account? <a href="/app/login" style="color:var(--accent-green);text-decoration:none;">Log in</a></p>
+      </div>
+    </div>
+    <script>
+      async function doSignup() {
+        const btn = document.getElementById('signupBtn');
+        const err = document.getElementById('errMsg');
+        err.style.display = 'none';
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const businessName = document.getElementById('bizName').value;
+        if (!email || !password) { err.textContent = 'Email and password required'; err.style.display = 'block'; return; }
+        if (password.length < 6) { err.textContent = 'Password must be at least 6 characters'; err.style.display = 'block'; return; }
+        btn.disabled = true; btn.textContent = 'Creating...';
+        try {
+          const res = await fetch('/api/founders/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, password, businessName }) });
+          const data = await res.json();
+          if (data.token) {
+            localStorage.setItem('bx_token', data.token);
+            localStorage.setItem('bx_founder', JSON.stringify(data.founder));
+            window.location.href = '/app/onboarding';
+          } else { err.textContent = data.error || 'Signup failed'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Create Account'; }
+        } catch(e) { err.textContent = 'Connection error'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Create Account'; }
+      }
+    </script></body></html>`);
+});
+
+// ── Login Page ──────────────────────────────────────────────────────────
+
+app.get('/app/login', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Log In — BotXchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>${PIVOT_CSS}
+      .login-wrap{max-width:440px;margin:80px auto;padding:0 20px;}
+      .login-card{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:40px 32px;}
+      .login-card h1{font-size:28px;font-weight:800;margin-bottom:6px;letter-spacing:-1px;}
+      .login-card .sub{color:var(--text-secondary);font-size:14px;margin-bottom:32px;}
+      .error-msg{color:var(--accent-red);font-size:12px;margin-top:8px;display:none;}
+    </style></head><body>
+    ${PIVOT_NAV}
+    <div class="login-wrap">
+      <div class="login-card">
+        <h1>Welcome Back</h1>
+        <p class="sub">Log in to your BotXchange dashboard</p>
+        <div class="form-group"><label>Email</label><input id="email" type="email" placeholder="you@company.com"></div>
+        <div class="form-group"><label>Password</label><input id="password" type="password" placeholder="Your password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+        <button onclick="doLogin()" class="btn-primary" style="width:100%;justify-content:center;" id="loginBtn">Log In</button>
+        <p class="error-msg" id="errMsg"></p>
+        <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-secondary);">Don't have an account? <a href="/app/signup" style="color:var(--accent-green);text-decoration:none;">Sign up</a></p>
+      </div>
+    </div>
+    <script>
+      async function doLogin() {
+        const btn = document.getElementById('loginBtn');
+        const err = document.getElementById('errMsg');
+        err.style.display = 'none';
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        if (!email || !password) { err.textContent = 'Email and password required'; err.style.display = 'block'; return; }
+        btn.disabled = true; btn.textContent = 'Logging in...';
+        try {
+          const res = await fetch('/api/founders/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
+          const data = await res.json();
+          if (data.token) {
+            localStorage.setItem('bx_token', data.token);
+            localStorage.setItem('bx_founder', JSON.stringify(data.founder));
+            window.location.href = data.onboarding_completed ? '/app/dashboard' : '/app/onboarding';
+          } else { err.textContent = data.error || 'Login failed'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; }
+        } catch(e) { err.textContent = 'Connection error'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Log In'; }
+      }
+    </script></body></html>`);
+});
+
+// ── Onboarding Page ─────────────────────────────────────────────────────
+
+app.get('/app/onboarding', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Onboarding — BotXchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>${PIVOT_CSS}
+      .onboard-wrap{max-width:560px;margin:60px auto;padding:0 20px;}
+      .onboard-card{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:40px 32px;}
+      .onboard-card h1{font-size:24px;font-weight:800;margin-bottom:4px;letter-spacing:-0.5px;}
+      .onboard-card .sub{color:var(--text-secondary);font-size:14px;margin-bottom:28px;}
+      .step{display:none;}
+      .step.active{display:block;}
+      .progress{display:flex;gap:6px;margin-bottom:32px;}
+      .progress .dot{flex:1;height:4px;border-radius:4px;background:var(--border);}
+      .progress .dot.done{background:var(--accent-green);}
+      .progress .dot.current{background:var(--accent-blue);}
+      .radio-group{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+      .radio-group label{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;transition:all 0.2s;}
+      .radio-group label:hover{border-color:var(--accent-blue);}
+      .radio-group input[type=radio]{accent-color:var(--accent-green);}
+      .radio-group input[type=radio]:checked + span{color:var(--accent-green);}
+      .nav-btns{display:flex;gap:12px;margin-top:24px;}
+      .nav-btns button{flex:1;}
+      .error-msg{color:var(--accent-red);font-size:12px;margin-top:8px;display:none;}
+    </style></head><body>
+    ${PIVOT_NAV}
+    <div class="onboard-wrap">
+      <div class="onboard-card">
+        <div class="progress"><div class="dot current" id="d0"></div><div class="dot" id="d1"></div><div class="dot" id="d2"></div><div class="dot" id="d3"></div><div class="dot" id="d4"></div><div class="dot" id="d5"></div></div>
+
+        <div class="step active" id="step0">
+          <h1>Your Business</h1>
+          <p class="sub">Tell us what you do (Step 1 of 6)</p>
+          <div class="form-group"><label>Describe your business in 2-3 sentences</label><textarea id="bizDesc" rows="3" placeholder="We help SaaS companies reduce churn..."></textarea></div>
+          <div class="form-group"><label>What's your offer? What do you sell?</label><textarea id="offer" rows="3" placeholder="A 12-week coaching program for..."></textarea></div>
+          <button class="btn-primary" style="width:100%;justify-content:center;" onclick="saveStep('business',{businessDescription:v('bizDesc'),offer:v('offer')})">Continue</button>
+        </div>
+
+        <div class="step" id="step1">
+          <h1>Ideal Customer</h1>
+          <p class="sub">Who are you selling to? (Step 2 of 6)</p>
+          <div class="form-group"><label>Industry</label>
+            <select id="industry"><option value="">Select...</option><option>SaaS</option><option>E-commerce</option><option>Agency</option><option>Professional Services</option><option>Healthcare</option><option>Finance</option><option>Education</option><option>Other</option></select>
+          </div>
+          <div class="form-group"><label>Company Size</label>
+            <select id="companySize"><option value="">Select...</option><option>1-10</option><option>11-50</option><option>51-200</option><option>201-1000</option><option>1000+</option></select>
+          </div>
+          <div class="form-group"><label>Decision Maker Title/Role</label><input id="dmTitle" placeholder="VP of Marketing, CTO, Founder..."></div>
+          <div class="form-group"><label>What pain point does your product solve?</label><textarea id="painPoint" rows="2" placeholder="They waste 10+ hours/week on..."></textarea></div>
+          <div class="nav-btns">
+            <button class="btn-secondary" onclick="goStep(0)">Back</button>
+            <button class="btn-primary" onclick="saveStep('icp',{industry:v('industry'),companySize:v('companySize'),decisionMakerTitle:v('dmTitle'),painPoint:v('painPoint')})">Continue</button>
+          </div>
+        </div>
+
+        <div class="step" id="step2">
+          <h1>Brand Voice</h1>
+          <p class="sub">How should we sound? (Step 3 of 6)</p>
+          <div class="form-group"><label>Tone</label>
+            <div class="radio-group">
+              <label><input type="radio" name="tone" value="Professional" checked><span>Professional</span></label>
+              <label><input type="radio" name="tone" value="Casual"><span>Casual</span></label>
+              <label><input type="radio" name="tone" value="Bold"><span>Bold</span></label>
+              <label><input type="radio" name="tone" value="Friendly"><span>Friendly</span></label>
+            </div>
+          </div>
+          <div class="form-group"><label>Claims or phrases we should NEVER use (optional)</label><textarea id="forbidden" rows="2" placeholder="Don't say 'guaranteed' or '10x ROI'..."></textarea></div>
+          <div class="form-group"><label>Proof points we should include (optional)</label><textarea id="proofPoints" rows="2" placeholder="We have 200+ customers, backed by Y Combinator..."></textarea></div>
+          <div class="nav-btns">
+            <button class="btn-secondary" onclick="goStep(1)">Back</button>
+            <button class="btn-primary" onclick="saveStep('brand',{tone:document.querySelector('input[name=tone]:checked').value,forbidden_claims:v('forbidden'),proof_requirements:v('proofPoints')})">Continue</button>
+          </div>
+        </div>
+
+        <div class="step" id="step3">
+          <h1>Connect Email</h1>
+          <p class="sub">How do you send outbound emails? (Step 4 of 6)</p>
+          <div class="form-group"><label>Email Provider</label>
+            <select id="emailProvider"><option value="none">Skip for now</option><option value="instantly">Instantly</option><option value="smartlead">Smartlead</option><option value="smtp">Custom SMTP</option></select>
+          </div>
+          <div id="emailConfig" style="display:none;">
+            <div class="form-group"><label>API Key / SMTP Config</label><input id="emailKey" type="password" placeholder="Your API key..."></div>
+            <div class="form-group"><label>Sending Domain</label><input id="sendDomain" placeholder="outreach.yourdomain.com"></div>
+            <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="warmup" style="width:auto;"><label style="margin:0;font-size:13px;text-transform:none;letter-spacing:0;color:var(--text-secondary);">My domain is warmed up (sending for 2+ weeks)</label>
+            </div>
+          </div>
+          <div class="nav-btns">
+            <button class="btn-secondary" onclick="goStep(2)">Back</button>
+            <button class="btn-primary" onclick="saveEmailStep()">Continue</button>
+          </div>
+        </div>
+
+        <div class="step" id="step4">
+          <h1>Set Budget</h1>
+          <p class="sub">Control your spending (Step 5 of 6)</p>
+          <div class="form-group"><label>Monthly Spend Ceiling</label>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <input type="range" id="ceiling" min="50" max="1000" value="200" style="flex:1;" oninput="document.getElementById('ceilVal').textContent='$'+this.value">
+              <span id="ceilVal" style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--accent-green);min-width:60px;">$200</span>
+            </div>
+            <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Credits cover AI processing costs. You only pay for what your team uses.</p>
+          </div>
+          <div class="nav-btns">
+            <button class="btn-secondary" onclick="goStep(3)">Back</button>
+            <button class="btn-primary" onclick="saveBudget()">Continue</button>
+          </div>
+        </div>
+
+        <div class="step" id="step5">
+          <h1>Launch Your Team</h1>
+          <p class="sub">Review and launch (Step 6 of 6)</p>
+          <div id="reviewSummary" style="background:#0a0a0f;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px;font-size:13px;line-height:1.8;color:var(--text-secondary);"></div>
+          <div style="background:#0a0a0f;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px;">
+            <p style="font-weight:700;margin-bottom:12px;">Your AI Execution Team</p>
+            <div style="display:grid;gap:8px;font-size:13px;">
+              <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--bg-card);border-radius:8px;"><span style="color:var(--accent-blue);">Head of Research</span><span style="color:var(--text-muted);">Prospect identification</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--bg-card);border-radius:8px;"><span style="color:var(--accent-purple);">CMO</span><span style="color:var(--text-muted);">Personalized outreach copy</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--bg-card);border-radius:8px;"><span style="color:var(--accent-amber);">CQO</span><span style="color:var(--text-muted);">Quality & compliance</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--bg-card);border-radius:8px;"><span style="color:var(--accent-green);">CRO</span><span style="color:var(--text-muted);">Email sequencing & sending</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--bg-card);border-radius:8px;"><span style="color:var(--text-primary);">Chief of Staff</span><span style="color:var(--text-muted);">Coordination & reporting</span></div>
+            </div>
+          </div>
+          <div class="nav-btns">
+            <button class="btn-secondary" onclick="goStep(4)">Back</button>
+            <button class="btn-primary" id="launchBtn" onclick="launchTeam()" style="flex:2;">Launch Your Team</button>
+          </div>
+          <p class="error-msg" id="launchErr"></p>
+        </div>
+      </div>
+    </div>
+    <script>
+      const token = localStorage.getItem('bx_token');
+      if (!token) window.location.href = '/app/signup';
+      let currentStep = 0;
+      const onboardData = {};
+
+      function v(id) { return document.getElementById(id).value; }
+
+      function goStep(n) {
+        document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+        document.getElementById('step'+n).classList.add('active');
+        for (let i = 0; i < 6; i++) {
+          const d = document.getElementById('d'+i);
+          d.className = i < n ? 'dot done' : i === n ? 'dot current' : 'dot';
+        }
+        currentStep = n;
+        if (n === 5) buildReview();
+      }
+
+      async function saveStep(step, data) {
+        Object.assign(onboardData, data);
+        try {
+          await fetch('/api/founders/onboarding', {
+            method: 'POST', headers: {'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body: JSON.stringify({ step, data })
+          });
+        } catch(e) {}
+        goStep(currentStep + 1);
+      }
+
+      document.getElementById('emailProvider').addEventListener('change', function() {
+        document.getElementById('emailConfig').style.display = this.value === 'none' ? 'none' : 'block';
+      });
+
+      function saveEmailStep() {
+        const provider = v('emailProvider');
+        if (provider === 'none') {
+          saveStep('email', { provider: 'none', warmupConfirmed: false });
+        } else {
+          saveStep('email', { provider, config: { apiKey: v('emailKey') }, sendingDomain: v('sendDomain'), warmupConfirmed: document.getElementById('warmup').checked });
+        }
+      }
+
+      function saveBudget() {
+        const ceiling = parseInt(v('ceiling'));
+        onboardData.ceilingCents = ceiling * 100;
+        saveStep('budget', { ceilingCents: ceiling * 100 });
+      }
+
+      function buildReview() {
+        const el = document.getElementById('reviewSummary');
+        el.innerHTML = '<strong style="color:var(--text-primary)">Business:</strong> ' + (onboardData.businessDescription || 'Not set') + '<br>'
+          + '<strong style="color:var(--text-primary)">Offer:</strong> ' + (onboardData.offer || 'Not set') + '<br>'
+          + '<strong style="color:var(--text-primary)">ICP:</strong> ' + (onboardData.industry || '') + ', ' + (onboardData.companySize || '') + ' employees, ' + (onboardData.decisionMakerTitle || '') + '<br>'
+          + '<strong style="color:var(--text-primary)">Tone:</strong> ' + (onboardData.tone || 'Professional') + '<br>'
+          + '<strong style="color:var(--text-primary)">Budget:</strong> $' + ((onboardData.ceilingCents || 20000) / 100) + '/month ceiling';
+      }
+
+      async function launchTeam() {
+        const btn = document.getElementById('launchBtn');
+        const err = document.getElementById('launchErr');
+        err.style.display = 'none';
+        btn.disabled = true; btn.textContent = 'Launching...';
+        try {
+          const res = await fetch('/api/founders/launch', { method: 'POST', headers: {'Content-Type':'application/json','Authorization':'Bearer '+token} });
+          const data = await res.json();
+          if (data.success) {
+            window.location.href = '/app/dashboard';
+          } else { err.textContent = data.error || 'Launch failed'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Launch Your Team'; }
+        } catch(e) { err.textContent = 'Connection error'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Launch Your Team'; }
+      }
+    </script></body></html>`);
+});
+
+// ── Execution Control Panel (Dashboard) ──────────────────────────────────
+
+app.get('/app/dashboard', (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Dashboard — BotXchange</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>${PIVOT_CSS}
+      .dash-layout{display:grid;grid-template-columns:280px 1fr 340px;gap:0;min-height:calc(100vh - 64px);}
+      .dash-top{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:16px 24px;background:var(--bg-card);border-bottom:1px solid var(--border);flex-wrap:wrap;gap:12px;}
+      .dash-top .venture-name{font-weight:700;font-size:18px;display:flex;align-items:center;gap:10px;}
+      .dash-top .status-badge{font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;}
+      .status-active{background:#00f0a020;color:var(--accent-green);border:1px solid #00f0a040;}
+      .status-paused{background:#ff4d6a20;color:var(--accent-red);border:1px solid #ff4d6a40;}
+      .dash-top-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+      .credit-display{font-family:var(--font-mono);font-size:14px;color:var(--accent-green);}
+      .spend-display{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);}
+
+      .stats-bar{grid-column:1/-1;display:flex;gap:0;border-bottom:1px solid var(--border);}
+      .stat-item{flex:1;text-align:center;padding:14px;border-right:1px solid var(--border);}
+      .stat-item:last-child{border-right:none;}
+      .stat-item .num{font-family:var(--font-mono);font-size:20px;font-weight:700;}
+      .stat-item .lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-top:2px;}
+
+      .panel-left{border-right:1px solid var(--border);padding:16px;overflow-y:auto;max-height:calc(100vh - 180px);}
+      .panel-center{padding:16px;overflow-y:auto;max-height:calc(100vh - 180px);}
+      .panel-right{border-left:1px solid var(--border);padding:16px;overflow-y:auto;max-height:calc(100vh - 180px);display:none;}
+      .panel-right.open{display:block;}
+
+      .agent-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;transition:border-color 0.2s;}
+      .agent-card:hover{border-color:var(--accent-blue);}
+      .agent-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+      .agent-name{font-weight:700;font-size:14px;}
+      .agent-status{font-size:10px;padding:3px 8px;border-radius:5px;font-weight:600;text-transform:uppercase;}
+      .agent-status.idle{background:#4a4a5e30;color:var(--text-muted);}
+      .agent-status.working{background:#4d8eff20;color:var(--accent-blue);}
+      .agent-status.blocked{background:#ff4d6a20;color:var(--accent-red);}
+      .agent-status.needs_approval{background:#ffb84d20;color:var(--accent-amber);}
+      .agent-meta{font-size:11px;color:var(--text-muted);display:flex;gap:12px;}
+      .agent-task{font-size:12px;color:var(--text-secondary);margin-top:6px;font-style:italic;}
+
+      .feed-item{padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:all 0.2s;}
+      .feed-item:hover{border-color:var(--accent-green);background:var(--bg-card-hover);}
+      .feed-time{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);}
+      .feed-agent{font-size:11px;font-weight:600;color:var(--accent-blue);}
+      .feed-msg{font-size:13px;color:var(--text-secondary);margin-top:4px;}
+
+      .evidence-title{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;}
+      .evidence-section{margin-bottom:16px;}
+      .evidence-section h4{font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted);margin-bottom:6px;}
+      .evidence-content{background:#0a0a0f;border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;}
+
+      .approval-bar{grid-column:1/-1;display:none;padding:12px 24px;background:#ffb84d10;border-bottom:1px solid #ffb84d40;align-items:center;justify-content:space-between;}
+      .approval-bar.show{display:flex;}
+      .approval-count{font-weight:700;color:var(--accent-amber);}
+
+      .empty-state{text-align:center;padding:60px 20px;color:var(--text-muted);}
+      .empty-state h3{font-size:18px;margin-bottom:8px;color:var(--text-secondary);}
+
+      @media(max-width:1024px){.dash-layout{grid-template-columns:1fr;}.panel-left{max-height:none;border-right:none;border-bottom:1px solid var(--border);}.panel-right{border-left:none;border-top:1px solid var(--border);max-height:none;}.panel-center{max-height:none;}}
+    </style></head><body>
+    ${PIVOT_NAV}
+    <div id="app"></div>
+    <script>
+      const token = localStorage.getItem('bx_token');
+      if (!token) { window.location.href = '/app/login'; }
+
+      const app = document.getElementById('app');
+      let dashData = null;
+      let refreshInterval = null;
+
+      async function loadDashboard() {
+        try {
+          const res = await fetch('/api/founders/dashboard', { headers: {'Authorization':'Bearer '+token} });
+          if (res.status === 401 || res.status === 403) { window.location.href = '/app/login'; return; }
+          dashData = await res.json();
+          render();
+        } catch(e) { app.innerHTML = '<div class="empty-state"><h3>Connection Error</h3><p>Could not load dashboard</p></div>'; }
+      }
+
+      function render() {
+        if (!dashData.venture) {
+          app.innerHTML = '<div class="empty-state"><h3>No Venture Yet</h3><p>Complete onboarding to launch your AI team</p><a href="/app/onboarding" class="btn-primary" style="margin-top:16px;">Complete Onboarding</a></div>';
+          return;
+        }
+
+        const v = dashData.venture;
+        const f = dashData.founder;
+        const agents = dashData.agents || [];
+        const activities = dashData.activities || [];
+        const approvals = dashData.pendingApprovals || [];
+        const isPaused = v.kill_switch_active;
+
+        const agentColors = {research:'var(--accent-blue)',messaging:'var(--accent-purple)',quality:'var(--accent-amber)',outreach:'var(--accent-green)',ops:'var(--text-primary)'};
+
+        app.innerHTML = '<div class="dash-layout">'
+          // Top bar
+          + '<div class="dash-top">'
+          + '<div class="venture-name">' + esc(v.name) + ' <span class="status-badge ' + (isPaused ? 'status-paused' : 'status-active') + '">' + (isPaused ? 'Paused' : 'Active') + '</span></div>'
+          + '<div class="dash-top-right">'
+          + '<div><div class="credit-display">$' + (f.credit_balance_cents / 100).toFixed(2) + ' credits</div></div>'
+          + '<button class="btn-small btn-primary" onclick="addCredits()">Add Credits</button>'
+          + '<button class="' + (isPaused ? 'btn-small btn-primary' : 'btn-small btn-danger') + '" onclick="toggleKillSwitch()">' + (isPaused ? 'Resume' : 'Pause Everything') + '</button>'
+          + '</div></div>'
+
+          // Approval bar
+          + '<div class="approval-bar ' + (approvals.length ? 'show' : '') + '"><div><span class="approval-count">' + approvals.length + ' items</span> awaiting your approval</div><div><button class="btn-small btn-primary" onclick="approveAll()">Approve All</button></div></div>'
+
+          // Stats bar
+          + '<div class="stats-bar">'
+          + '<div class="stat-item"><div class="num" style="color:var(--accent-blue)">' + (v.total_prospects_found||0) + '</div><div class="lbl">Prospects</div></div>'
+          + '<div class="stat-item"><div class="num" style="color:var(--accent-purple)">' + (v.total_emails_sent||0) + '</div><div class="lbl">Emails Sent</div></div>'
+          + '<div class="stat-item"><div class="num" style="color:var(--accent-green)">' + (v.total_replies||0) + '</div><div class="lbl">Replies</div></div>'
+          + '<div class="stat-item"><div class="num" style="color:var(--accent-amber)">' + (v.total_meetings_booked||0) + '</div><div class="lbl">Meetings</div></div>'
+          + '<div class="stat-item"><div class="num" style="color:var(--accent-green)">$' + ((v.total_revenue_cents||0)/100).toFixed(0) + '</div><div class="lbl">Revenue</div></div>'
+          + '</div>'
+
+          // Left panel: agents
+          + '<div class="panel-left"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Your Team</h3>'
+          + agents.map(a => '<div class="agent-card">'
+            + '<div class="agent-header"><span class="agent-name" style="color:' + (agentColors[a.role]||'inherit') + '">' + esc(a.display_name) + '</span>'
+            + '<span class="agent-status ' + a.status + '">' + a.status.replace('_',' ') + '</span></div>'
+            + (a.current_task ? '<div class="agent-task">' + esc(a.current_task) + '</div>' : '')
+            + '<div class="agent-meta"><span>$' + ((a.spend_cents||0)/100).toFixed(2) + ' spent</span><span>' + (a.actions_completed||0) + ' actions</span></div>'
+            + '</div>').join('')
+          + '<button class="btn-primary btn-small" style="width:100%;justify-content:center;margin-top:12px;" onclick="runResearch()">Run Research Cycle</button>'
+          + '<button class="btn-secondary btn-small" style="width:100%;justify-content:center;margin-top:8px;" onclick="runDaily()">Run Full Pipeline</button>'
+          + '</div>'
+
+          // Center panel: activity feed
+          + '<div class="panel-center"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Activity Feed</h3>'
+          + (activities.length ? activities.map(a => '<div class="feed-item" onclick="showEvidence(\\'' + (a.task_id || '') + '\\')">'
+            + '<div style="display:flex;justify-content:space-between;"><span class="feed-agent">' + esc(a.agent_id ? agents.find(ag=>ag.id===a.agent_id)?.display_name||'System' : 'System') + '</span>'
+            + '<span class="feed-time">' + timeAgo(a.created_at) + '</span></div>'
+            + '<div class="feed-msg">' + esc(a.message) + '</div>'
+            + '</div>').join('') : '<div class="empty-state"><h3>No Activity Yet</h3><p>Run a research cycle to get started</p></div>')
+          + '</div>'
+
+          // Right panel: evidence drawer
+          + '<div class="panel-right" id="evidencePanel"><div class="evidence-title"><span>Evidence</span><button onclick="closeEvidence()" style="background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">&times;</button></div><div id="evidenceContent"></div></div>'
+          + '</div>';
+      }
+
+      function esc(s) { if(!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+      function timeAgo(ts) {
+        if (!ts) return '';
+        const d = Date.now() - ts;
+        if (d < 60000) return 'just now';
+        if (d < 3600000) return Math.floor(d/60000) + 'm ago';
+        if (d < 86400000) return Math.floor(d/3600000) + 'h ago';
+        return Math.floor(d/86400000) + 'd ago';
+      }
+
+      async function toggleKillSwitch() {
+        const active = !dashData.venture.kill_switch_active;
+        await fetch('/api/founders/kill-switch', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({active}) });
+        loadDashboard();
+      }
+
+      async function approveAll() {
+        await fetch('/api/founders/approve-all', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token} });
+        loadDashboard();
+      }
+
+      async function addCredits() {
+        const amount = prompt('How many dollars of credits to add? (min $25)', '50');
+        if (!amount) return;
+        const cents = Math.round(parseFloat(amount) * 100);
+        if (cents < 2500) { alert('Minimum $25'); return; }
+        await fetch('/api/founders/add-credits', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({amountCents:cents}) });
+        loadDashboard();
+      }
+
+      async function showEvidence(taskId) {
+        if (!taskId) return;
+        const panel = document.getElementById('evidencePanel');
+        const content = document.getElementById('evidenceContent');
+        panel.classList.add('open');
+        content.innerHTML = '<p style="color:var(--text-muted)">Loading...</p>';
+        try {
+          const res = await fetch('/api/founders/tasks/' + taskId, { headers:{'Authorization':'Bearer '+token} });
+          const task = await res.json();
+          content.innerHTML = '<div class="evidence-section"><h4>Agent</h4><div class="evidence-content">' + esc(task.agent_name || task.agent_role || 'Unknown') + '</div></div>'
+            + '<div class="evidence-section"><h4>Intent</h4><div class="evidence-content">' + esc(task.intent || 'N/A') + '</div></div>'
+            + '<div class="evidence-section"><h4>Artifact</h4><div class="evidence-content">' + esc(task.artifact || 'N/A') + '</div></div>'
+            + '<div class="evidence-section"><h4>Receipt</h4><div class="evidence-content">' + esc(task.receipt || 'N/A') + '</div></div>'
+            + '<div class="evidence-section"><h4>Cost</h4><div class="evidence-content">$' + ((task.cost_cents||0)/100).toFixed(4) + '</div></div>';
+        } catch(e) { content.innerHTML = '<p style="color:var(--accent-red)">Error loading evidence</p>'; }
+      }
+
+      function closeEvidence() { document.getElementById('evidencePanel').classList.remove('open'); }
+
+      async function runResearch() {
+        const btn = event.target;
+        btn.disabled = true; btn.textContent = 'Researching...';
+        try {
+          await fetch('/api/founders/run-research', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+          loadDashboard();
+        } catch(e) { alert('Error: ' + e.message); }
+        btn.disabled = false; btn.textContent = 'Run Research Cycle';
+      }
+
+      async function runDaily() {
+        const btn = event.target;
+        btn.disabled = true; btn.textContent = 'Running...';
+        try {
+          await fetch('/api/founders/run-daily', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+          loadDashboard();
+        } catch(e) { alert('Error: ' + e.message); }
+        btn.disabled = false; btn.textContent = 'Run Full Pipeline';
+      }
+
+      // Initial load + auto-refresh
+      loadDashboard();
+      refreshInterval = setInterval(loadDashboard, 30000);
+    </script></body></html>`);
 });
 
 // ============================================================================

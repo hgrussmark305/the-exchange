@@ -450,7 +450,7 @@ class ExchangeDatabase {
       // Active Ventures
       this.db.run(`
         CREATE VIEW IF NOT EXISTS active_ventures AS
-        SELECT 
+        SELECT
           v.*,
           COUNT(DISTINCT vp.bot_id) as current_participants,
           AVG(b.reputation_score) as avg_bot_reputation,
@@ -461,6 +461,198 @@ class ExchangeDatabase {
         WHERE v.status IN ('forming', 'active', 'generating')
         GROUP BY v.id
         ORDER BY v.updated_at DESC
+      `);
+
+      // ====================================================================
+      // BOTXCHANGE PIVOT: New tables for founder execution platform
+      // All existing tables remain dormant — nothing is dropped
+      // ====================================================================
+
+      // Founders: platform users who run ventures
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS founders (
+          id TEXT PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          name TEXT,
+          business_description TEXT,
+          offer TEXT,
+          icp TEXT,
+          brand_constraints TEXT,
+          email_provider TEXT,
+          email_provider_config TEXT,
+          sending_domain TEXT,
+          domain_warmup_confirmed INTEGER DEFAULT 0,
+          autonomy_mode TEXT DEFAULT 'bootstrap',
+          monthly_spend_ceiling_cents INTEGER DEFAULT 20000,
+          credit_balance_cents INTEGER DEFAULT 0,
+          total_credits_purchased_cents INTEGER DEFAULT 0,
+          created_at INTEGER,
+          onboarding_completed_at INTEGER,
+          last_active_at INTEGER
+        )
+      `);
+
+      // Founder ventures: each founder has one active venture
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS founder_ventures (
+          id TEXT PRIMARY KEY,
+          founder_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          status TEXT DEFAULT 'onboarding',
+          venture_type TEXT DEFAULT 'outbound_revenue',
+          kill_switch_active INTEGER DEFAULT 0,
+          daily_emails_sent INTEGER DEFAULT 0,
+          daily_email_limit INTEGER DEFAULT 25,
+          total_revenue_cents INTEGER DEFAULT 0,
+          platform_take_rate REAL DEFAULT 0.05,
+          total_platform_revenue_cents INTEGER DEFAULT 0,
+          total_prospects_found INTEGER DEFAULT 0,
+          total_emails_sent INTEGER DEFAULT 0,
+          total_replies INTEGER DEFAULT 0,
+          total_meetings_booked INTEGER DEFAULT 0,
+          total_deals_closed INTEGER DEFAULT 0,
+          created_at INTEGER,
+          updated_at INTEGER,
+          FOREIGN KEY (founder_id) REFERENCES founders(id)
+        )
+      `);
+
+      // Execution agents: the fixed 5-agent team per venture
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS execution_agents (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          status TEXT DEFAULT 'idle',
+          current_task TEXT,
+          actions_completed INTEGER DEFAULT 0,
+          spend_cents INTEGER DEFAULT 0,
+          pending_approvals INTEGER DEFAULT 0,
+          created_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id)
+        )
+      `);
+
+      // Execution tasks: every unit of work an agent performs
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS execution_tasks (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          task_type TEXT NOT NULL,
+          status TEXT DEFAULT 'created',
+          requires_approval INTEGER DEFAULT 1,
+          approved_by TEXT,
+          approved_at INTEGER,
+          intent TEXT,
+          artifact TEXT,
+          receipt TEXT,
+          cost_cents INTEGER DEFAULT 0,
+          input_from_task TEXT,
+          prospect_id TEXT,
+          created_at INTEGER,
+          started_at INTEGER,
+          completed_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id),
+          FOREIGN KEY (agent_id) REFERENCES execution_agents(id)
+        )
+      `);
+
+      // Prospects: relationship memory per contact
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS prospects (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          email TEXT,
+          name TEXT,
+          title TEXT,
+          company TEXT,
+          company_url TEXT,
+          linkedin_url TEXT,
+          source_url TEXT,
+          icp_match_reason TEXT,
+          icp_confidence_score REAL,
+          research_notes TEXT,
+          outreach_status TEXT DEFAULT 'new',
+          interactions TEXT DEFAULT '[]',
+          next_follow_up_date INTEGER,
+          follow_up_count INTEGER DEFAULT 0,
+          last_response_sentiment TEXT,
+          created_at INTEGER,
+          updated_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id)
+        )
+      `);
+
+      // Venture memory: structured memory architecture (4 layers)
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS venture_memory (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          layer TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          readable_by TEXT DEFAULT 'all',
+          writable_by TEXT DEFAULT 'system',
+          source TEXT,
+          created_at INTEGER,
+          updated_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id)
+        )
+      `);
+
+      // Activity log: every action for the activity feed
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS activity_log (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          agent_id TEXT,
+          event_type TEXT NOT NULL,
+          message TEXT NOT NULL,
+          details TEXT,
+          task_id TEXT,
+          prospect_id TEXT,
+          created_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id)
+        )
+      `);
+
+      // Revenue events: for attribution tracking
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS revenue_events (
+          id TEXT PRIMARY KEY,
+          venture_id TEXT NOT NULL,
+          prospect_id TEXT,
+          amount_cents INTEGER NOT NULL,
+          attribution_type TEXT NOT NULL,
+          originating_email_task_id TEXT,
+          attribution_chain TEXT,
+          platform_take_cents INTEGER,
+          status TEXT DEFAULT 'pending',
+          confirmed_at INTEGER,
+          created_at INTEGER,
+          FOREIGN KEY (venture_id) REFERENCES founder_ventures(id)
+        )
+      `);
+
+      // Credit transactions
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS credit_transactions (
+          id TEXT PRIMARY KEY,
+          founder_id TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL,
+          balance_after_cents INTEGER NOT NULL,
+          description TEXT,
+          transaction_type TEXT NOT NULL,
+          task_id TEXT,
+          stripe_payment_intent TEXT,
+          created_at INTEGER,
+          FOREIGN KEY (founder_id) REFERENCES founders(id)
+        )
       `);
     });
   }
