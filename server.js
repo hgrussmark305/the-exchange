@@ -2532,6 +2532,30 @@ app.post('/api/admin/retry-failed', authenticateToken, async (req, res) => {
   }
 });
 
+// Reset test account with credits (for demo/testing)
+app.post('/api/admin/reset-test-account', async (req, res) => {
+  try {
+    const email = 'test@botxchange.ai';
+    const password = 'testpass123';
+    const passwordHash = await bcrypt.hash(password, 10);
+    const existing = await db.query('SELECT id FROM founders WHERE email = ?', [email]);
+    if (existing.length) {
+      await db.run('UPDATE founders SET password_hash = ?, credit_balance_cents = 50000 WHERE email = ?', [passwordHash, email]);
+      res.json({ success: true, message: 'Test account reset', email, password, credits: '$500.00' });
+    } else {
+      const founderId = require('uuid').v4();
+      await db.run(
+        `INSERT INTO founders (id, email, password_hash, name, credit_balance_cents, total_credits_purchased_cents, monthly_spend_ceiling_cents, created_at, last_active_at)
+         VALUES (?, ?, ?, ?, 50000, 50000, 50000, ?, ?)`,
+        [founderId, email, passwordHash, 'Test Account', Date.now(), Date.now()]
+      );
+      res.json({ success: true, message: 'Test account created', email, password, credits: '$500.00' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Bot's bounties (authenticated bot)
 app.get('/api/bots/my-bounties', authenticateBot, async (req, res) => {
   try {
@@ -6259,17 +6283,27 @@ app.get('/app/dashboard', (req, res) => {
       .panel-right{border-left:1px solid var(--border);padding:16px;overflow-y:auto;max-height:calc(100vh - 180px);display:none;}
       .panel-right.open{display:block;}
 
-      .agent-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;transition:border-color 0.2s;}
+      .org-chart{display:flex;flex-direction:column;align-items:center;gap:0;}
+      .org-top{display:flex;justify-content:center;margin-bottom:0;}
+      .org-connector{display:flex;flex-direction:column;align-items:center;}
+      .org-line-down{width:2px;height:16px;background:var(--border);}
+      .org-line-h{display:flex;align-items:flex-start;justify-content:center;position:relative;}
+      .org-line-h::before{content:'';position:absolute;top:0;left:calc(12.5% + 6px);right:calc(12.5% + 6px);height:2px;background:var(--border);}
+      .org-reports{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;width:100%;}
+      .org-reports .agent-card{position:relative;}
+      .org-reports .agent-card::before{content:'';position:absolute;top:-16px;left:50%;width:2px;height:16px;background:var(--border);}
+      .agent-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:12px;transition:border-color 0.2s;text-align:center;}
       .agent-card:hover{border-color:var(--accent-blue);}
-      .agent-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
-      .agent-name{font-weight:700;font-size:14px;}
-      .agent-status{font-size:10px;padding:3px 8px;border-radius:5px;font-weight:600;text-transform:uppercase;}
+      .agent-role-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
+      .agent-header{display:flex;justify-content:center;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:4px;}
+      .agent-name{font-weight:700;font-size:13px;}
+      .agent-status{font-size:9px;padding:2px 6px;border-radius:5px;font-weight:600;text-transform:uppercase;}
       .agent-status.idle{background:#4a4a5e30;color:var(--text-muted);}
       .agent-status.working{background:#4d8eff20;color:var(--accent-blue);}
       .agent-status.blocked{background:#ff4d6a20;color:var(--accent-red);}
       .agent-status.needs_approval{background:#ffb84d20;color:var(--accent-amber);}
-      .agent-meta{font-size:11px;color:var(--text-muted);display:flex;gap:12px;}
-      .agent-task{font-size:12px;color:var(--text-secondary);margin-top:6px;font-style:italic;}
+      .agent-meta{font-size:10px;color:var(--text-muted);display:flex;justify-content:center;gap:8px;margin-top:4px;}
+      .agent-task{font-size:11px;color:var(--text-secondary);margin-top:4px;font-style:italic;}
 
       .feed-item{padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:all 0.2s;}
       .feed-item:hover{border-color:var(--accent-green);background:var(--bg-card-hover);}
@@ -6294,14 +6328,16 @@ app.get('/app/dashboard', (req, res) => {
       .tab-content{display:none;}
       .tab-content.active{display:grid;grid-template-columns:280px 1fr 340px;}
 
+      .memory-section{margin-bottom:20px;}
+      .memory-section-title{font-size:13px;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+      .memory-section-dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
       .memory-item{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:8px;}
-      .memory-layer{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;margin-bottom:4px;}
-      .memory-layer.vision{color:var(--accent-purple);}
-      .memory-layer.execution{color:var(--accent-blue);}
-      .memory-layer.performance{color:var(--accent-green);}
-      .memory-layer.relationship{color:var(--accent-amber);}
-      .memory-key{font-weight:700;font-size:13px;margin-bottom:4px;}
-      .memory-value{font-size:12px;color:var(--text-secondary);word-break:break-word;}
+      .memory-key{font-weight:700;font-size:13px;margin-bottom:6px;color:var(--text-primary);}
+      .memory-value{font-size:12px;color:var(--text-secondary);word-break:break-word;line-height:1.6;}
+      .memory-value ul{margin:4px 0;padding-left:18px;}
+      .memory-value li{margin-bottom:2px;}
+      .memory-edit-area{width:100%;min-height:60px;background:#0a0a0f;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;color:var(--text-secondary);font-family:var(--font-mono);resize:vertical;margin-top:8px;}
+      .memory-edit-btns{display:flex;gap:6px;margin-top:6px;}
 
       .prospect-row{display:grid;grid-template-columns:1fr 120px 100px 80px;gap:8px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;align-items:center;}
       .prospect-name{font-weight:600;}
@@ -6334,6 +6370,14 @@ app.get('/app/dashboard', (req, res) => {
         .panel-right{border-left:none;border-top:1px solid var(--border);max-height:none;}
         .panel-center{max-height:none;}
         .credit-options{grid-template-columns:repeat(2,1fr);}
+        .org-reports{grid-template-columns:repeat(2,1fr);}
+        .org-line-h::before{left:25%;right:25%;}
+      }
+      @media(max-width:600px){
+        .org-reports{grid-template-columns:1fr;max-width:200px;margin:0 auto;}
+        .org-line-h::before{display:none;}
+        .org-reports .agent-card::before{display:none;}
+        .org-connector .org-line-down{height:8px;}
       }
     </style></head><body>
     ${PIVOT_NAV}
@@ -6398,15 +6442,28 @@ app.get('/app/dashboard', (req, res) => {
             ).join('')
           + '</div>';
 
-        // Left panel: agents (shared across tabs)
-        const leftPanel = '<div class="panel-left"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Your Team</h3>'
-          + agents.map(a => '<div class="agent-card">'
-            + '<div class="agent-header"><span class="agent-name" style="color:' + (agentColors[a.role]||'inherit') + '">' + esc(a.display_name) + '</span>'
-            + '<span class="agent-status ' + a.status + '">' + a.status.replace('_',' ') + '</span></div>'
+        // Left panel: org chart (shared across tabs)
+        function agentCard(a) {
+          return '<div class="agent-card">'
+            + '<div class="agent-header"><span class="agent-role-dot" style="background:' + (agentColors[a.role]||'var(--text-muted)') + '"></span><span class="agent-name">' + esc(a.display_name) + '</span></div>'
+            + '<span class="agent-status ' + a.status + '">' + a.status.replace('_',' ') + '</span>'
             + (a.current_task ? '<div class="agent-task">' + esc(a.current_task) + '</div>' : '')
-            + '<div class="agent-meta"><span>$' + ((a.spend_cents||0)/100).toFixed(2) + ' spent</span><span>' + (a.actions_completed||0) + ' actions</span></div>'
-            + '</div>').join('')
-          + '<button class="btn-primary btn-small" style="width:100%;justify-content:center;margin-top:12px;" onclick="runResearch()">Run Research Cycle</button>'
+            + '<div class="agent-meta"><span>$' + ((a.spend_cents||0)/100).toFixed(2) + '</span><span>' + (a.actions_completed||0) + ' actions</span></div>'
+            + '</div>';
+        }
+        const boss = agents.find(a => a.role === 'ops') || agents[0];
+        const reports = agents.filter(a => a.role !== 'ops');
+        const roleOrder = ['research','messaging','quality','outreach'];
+        reports.sort((a,b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role));
+
+        const leftPanel = '<div class="panel-left"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Your Team</h3>'
+          + '<div class="org-chart">'
+          + '<div class="org-top">' + agentCard(boss) + '</div>'
+          + '<div class="org-connector"><div class="org-line-down"></div></div>'
+          + '<div class="org-line-h"><div style="height:16px;width:100%;"></div></div>'
+          + '<div class="org-reports">' + reports.map(a => agentCard(a)).join('') + '</div>'
+          + '</div>'
+          + '<button class="btn-primary btn-small" style="width:100%;justify-content:center;margin-top:16px;" onclick="runResearch()">Run Research Cycle</button>'
           + '<button class="btn-secondary btn-small" style="width:100%;justify-content:center;margin-top:8px;" onclick="runDaily()">Run Full Pipeline</button>'
           + '</div>';
 
@@ -6512,28 +6569,107 @@ app.get('/app/dashboard', (req, res) => {
       }
 
       // ── Memory ──────────────────────────────────────────
+      const memoryKeyLabels = {
+        icp: 'Ideal Customer Profile',
+        business_description: 'Business Description',
+        offer: 'Your Offer',
+        brand_tone: 'Brand Tone',
+        forbidden_claims: 'Things to Avoid Saying',
+        proof_points: 'Proof Points',
+        avg_reply_rate: 'Average Reply Rate',
+        best_subject_line: 'Best Subject Line',
+        optimal_send_time: 'Best Send Time',
+        emails_per_day_target: 'Daily Email Target'
+      };
+      const memoryLayerNames = {
+        vision: 'Your Business',
+        performance: "What\\'s Working",
+        relationship: 'Relationships'
+      };
+
+      function formatMemoryValue(key, value) {
+        if (key === 'icp') {
+          try {
+            const icp = JSON.parse(value);
+            let html = '<ul>';
+            if (icp.industry) html += '<li><strong>Industry:</strong> ' + esc(icp.industry) + '</li>';
+            if (icp.companySize) html += '<li><strong>Company Size:</strong> ' + esc(icp.companySize) + '</li>';
+            if (icp.decisionMakerTitle) html += '<li><strong>Decision Maker:</strong> ' + esc(icp.decisionMakerTitle) + '</li>';
+            if (icp.painPoint) html += '<li><strong>Pain Point:</strong> ' + esc(icp.painPoint) + '</li>';
+            if (icp.geography) html += '<li><strong>Geography:</strong> ' + esc(icp.geography) + '</li>';
+            Object.keys(icp).forEach(k => {
+              if (!['industry','companySize','decisionMakerTitle','painPoint','geography'].includes(k)) {
+                html += '<li><strong>' + esc(k) + ':</strong> ' + esc(String(icp[k])) + '</li>';
+              }
+            });
+            html += '</ul>';
+            return html;
+          } catch(e) { return esc(value); }
+        }
+        return esc(value);
+      }
+
       async function loadMemory() {
         try {
           const res = await fetch('/api/founders/memory', { headers:{'Authorization':'Bearer '+token} });
           memoryData = await res.json();
           const el = document.getElementById('memoryList');
           if (!el) return;
-          const mem = memoryData.memory || [];
+          const mem = (memoryData.memory || []).filter(m => m.layer !== 'execution');
           if (!mem.length) { el.innerHTML = '<div class="empty-state"><p>No memory entries yet. Run a cycle to populate.</p></div>'; return; }
 
-          el.innerHTML = mem.map(m => '<div class="memory-item">'
-            + '<div class="memory-layer ' + m.layer + '">' + m.layer + '</div>'
-            + '<div class="memory-key">' + esc(m.key) + '</div>'
-            + '<div class="memory-value">' + esc(m.value.substring(0,200)) + (m.value.length>200?'...':'') + '</div>'
-            + (m.writable_by === 'founder' ? '<button class="btn-small btn-secondary" style="margin-top:8px;font-size:10px;" onclick="editMemory(\\'' + m.id + '\\',\\'' + esc(m.key) + '\\')">Edit</button>' : '')
-            + '</div>').join('');
+          const grouped = {};
+          mem.forEach(m => {
+            const layer = m.layer || 'other';
+            if (!grouped[layer]) grouped[layer] = [];
+            grouped[layer].push(m);
+          });
+
+          const layerOrder = ['vision','performance','relationship'];
+          const layerColors = {vision:'var(--accent-purple)',performance:'var(--accent-green)',relationship:'var(--accent-amber)'};
+          let html = '';
+          layerOrder.forEach(layer => {
+            if (!grouped[layer]) return;
+            const name = memoryLayerNames[layer] || layer;
+            html += '<div class="memory-section">'
+              + '<div class="memory-section-title"><span class="memory-section-dot" style="background:' + (layerColors[layer]||'var(--text-muted)') + '"></span>' + name + '</div>';
+            grouped[layer].forEach(m => {
+              const label = memoryKeyLabels[m.key] || m.key;
+              html += '<div class="memory-item">'
+                + '<div class="memory-key">' + esc(label) + '</div>'
+                + '<div class="memory-value" id="memval-' + m.id + '">' + formatMemoryValue(m.key, m.value) + '</div>'
+                + (m.writable_by === 'founder' ? '<button class="btn-small btn-secondary" style="margin-top:8px;font-size:10px;" id="editbtn-' + m.id + '" onclick="startEditMemory(\\'' + m.id + '\\',\\'' + esc(m.key).replace(/'/g,"\\\\'") + '\\')">Edit</button>' : '')
+                + '</div>';
+            });
+            html += '</div>';
+          });
+          el.innerHTML = html;
         } catch(e) {}
       }
 
-      async function editMemory(memId, key) {
-        const val = prompt('Edit memory: ' + key);
-        if (val === null) return;
-        await fetch('/api/founders/memory/' + memId, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({value:val}) });
+      function startEditMemory(memId, key) {
+        const valEl = document.getElementById('memval-' + memId);
+        const btnEl = document.getElementById('editbtn-' + memId);
+        if (!valEl) return;
+        const rawMem = (memoryData.memory || []).find(m => m.id === memId);
+        const rawVal = rawMem ? rawMem.value : valEl.textContent;
+        btnEl.style.display = 'none';
+        valEl.innerHTML = '<textarea class="memory-edit-area" id="memtxt-' + memId + '">' + esc(rawVal) + '</textarea>'
+          + '<div class="memory-edit-btns">'
+          + '<button class="btn-small btn-primary" onclick="saveEditMemory(\\'' + memId + '\\')">Save</button>'
+          + '<button class="btn-small btn-secondary" onclick="cancelEditMemory()">Cancel</button>'
+          + '</div>';
+      }
+
+      async function saveEditMemory(memId) {
+        const txt = document.getElementById('memtxt-' + memId);
+        if (!txt) return;
+        await fetch('/api/founders/memory/' + memId, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({value:txt.value}) });
+        memoryData = null;
+        loadMemory();
+      }
+
+      function cancelEditMemory() {
         memoryData = null;
         loadMemory();
       }

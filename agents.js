@@ -193,16 +193,46 @@ ${memory ? 'Context:\n' + memory : ''}
 
 Already found companies (avoid duplicates): ${existingCompanies.join(', ') || 'none yet'}`;
 
-    const userPrompt = `Generate a list of 10 prospect companies that match the ICP above. For each prospect, provide:
-- company: Company name
+    // Build size-specific guidance
+    const companySize = (icp.companySize || '').toLowerCase();
+    let sizeGuidance = '';
+    if (companySize.includes('1-10') || companySize.includes('1 to 10') || companySize.includes('micro') || companySize.includes('solo')) {
+      sizeGuidance = `
+HARD CONSTRAINTS — COMPANY SIZE (MANDATORY):
+- The ICP specifies "${icp.companySize}" employees. This is NON-NEGOTIABLE.
+- You MUST generate companies with 1-10 employees ONLY.
+- Think: solo founders, freelance studios, 2-3 person startups, micro-agencies, boutique consultancies, small local shops.
+- Do NOT generate companies like Salesforce, HubSpot, Stripe, or any well-known company with more than 10 employees.
+- Do NOT generate any company that has raised Series A or above. These are bootstrapped or pre-seed businesses.
+- Every company must be small enough that the founder/owner is the decision maker.`;
+    } else if (companySize.includes('11-50') || companySize.includes('11 to 50') || companySize.includes('small')) {
+      sizeGuidance = `
+HARD CONSTRAINTS — COMPANY SIZE (MANDATORY):
+- The ICP specifies "${icp.companySize}" employees. This is NON-NEGOTIABLE.
+- You MUST generate companies with 11-50 employees ONLY.
+- Think: small agencies, growing startups, boutique firms, small regional businesses.
+- Do NOT generate enterprise companies or well-known brands. These are small independent companies.`;
+    } else if (companySize) {
+      sizeGuidance = `
+HARD CONSTRAINTS — COMPANY SIZE (MANDATORY):
+- The ICP specifies "${icp.companySize}" employees. Every prospect MUST match this size range.
+- Do NOT include companies outside this range.`;
+    }
+
+    const userPrompt = `Generate a list of 10 prospect companies that match the ICP above.
+${sizeGuidance}
+
+For each prospect, provide:
+- company: Company name (MUST be a real-sounding company matching the size constraint)
 - company_url: Company website URL
 - name: Decision maker name (realistic but generated)
 - title: Their job title
 - email: Likely email format (firstname@company.com)
-- icp_match_reason: Why they match the ICP (1-2 sentences)
+- estimated_employees: Number (MUST be within the ICP company size range)
+- icp_match_reason: Why they match the ICP including why their size fits (1-2 sentences)
 - icp_confidence_score: 0.0-1.0
 
-Return as JSON array. Be specific about real industries and company types, not generic.`;
+Return as JSON array. Be specific about real industries and company types, not generic. Every company MUST match the specified company size.`;
 
     const result = await this.callLLM(systemPrompt, userPrompt, 4096);
 
