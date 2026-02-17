@@ -279,7 +279,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 });
 
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, { index: false }));
 
 // ============================================================================
 // SHARED: Mobile hamburger menu CSS + JS (injected into all pages)
