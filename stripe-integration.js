@@ -170,6 +170,8 @@ class StripeIntegration {
           await this.handleBountyPayment(session);
         } else if (session.metadata?.type === 'job') {
           await this.handleJobPayment(session);
+        } else if (session.metadata?.type === 'founder_credits') {
+          await this.handleCreditPayment(session);
         } else {
           await this.handleSuccessfulPayment(session);
         }
@@ -299,6 +301,80 @@ class StripeIntegration {
 
     console.log(`💸 Job ${jobId} refunded: ${refund.id}`);
     return { refundId: refund.id, status: refund.status };
+  }
+
+  /**
+   * Create Stripe Checkout for founder credit purchase
+   */
+  async createCreditCheckout({ founderId, amountCents, email, baseUrl }) {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer_email: email || undefined,
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'BotXchange Credits',
+            description: `$${(amountCents / 100).toFixed(2)} in agent execution credits`
+          },
+          unit_amount: amountCents
+        },
+        quantity: 1
+      }],
+      mode: 'payment',
+      success_url: `${baseUrl}/app/dashboard?credits=success&amount=${amountCents}`,
+      cancel_url: `${baseUrl}/app/dashboard?credits=cancelled`,
+      metadata: {
+        type: 'founder_credits',
+        founderId: founderId,
+        amountCents: String(amountCents),
+        platform: 'botxchange'
+      }
+    });
+
+    console.log(`💳 Credit checkout created: $${(amountCents / 100).toFixed(2)} for founder ${founderId}`);
+    return { sessionId: session.id, url: session.url };
+  }
+
+  /**
+   * Handle founder credit purchase webhook
+   */
+  async handleCreditPayment(session) {
+    const founderId = session.metadata.founderId;
+    const amountCents = parseInt(session.metadata.amountCents);
+    console.log(`💰 Credit payment received: $${(amountCents / 100).toFixed(2)} for founder ${founderId}`);
+
+    const founders = await this.db.query('SELECT credit_balance_cents FROM founders WHERE id = ?', [founderId]);
+    if (!founders.length) {
+      console.error('Founder not found for credit payment:', founderId);
+      return;
+    }
+
+    const newBalance = (founders[0].credit_balance_cents || 0) + amountCents;
+
+    await this.db.run(
+      'UPDATE founders SET credit_balance_cents = ?, total_credits_purchased_cents = total_credits_purchased_cents + ? WHERE id = ?',
+      [newBalance, amountCents, founderId]
+    );
+
+    const { v4: uuidv4 } = require('uuid');
+    await this.db.run(
+      `INSERT INTO credit_transactions (id, founder_id, amount_cents, balance_after_cents, description, transaction_type, stripe_payment_intent, created_at)
+       VALUES (?, ?, ?, ?, 'Credit purchase via Stripe', 'purchase', ?, ?)`,
+      [uuidv4(), founderId, amountCents, newBalance, session.payment_intent, Date.now()]
+    );
+
+    // Reactivate venture if it was paused due to zero credits
+    const venture = (await this.db.query('SELECT id, kill_switch_active FROM founder_ventures WHERE founder_id = ?', [founderId]))[0];
+    if (venture && venture.kill_switch_active) {
+      await this.db.run('UPDATE founder_ventures SET kill_switch_active = 0 WHERE id = ?', [venture.id]);
+      await this.db.run(
+        `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'credit_reload', ?, ?)`,
+        [uuidv4(), venture.id, `Credits loaded: $${(amountCents / 100).toFixed(2)} — activity resumed`, Date.now()]
+      );
+    }
+
+    console.log(`   ✅ Credits added: $${(amountCents / 100).toFixed(2)}, new balance: $${(newBalance / 100).toFixed(2)}`);
   }
 
   /**

@@ -5724,6 +5724,164 @@ app.put('/api/founders/memory/:memoryId', authenticateFounder, async (req, res) 
   }
 });
 
+// ── Memory Reset (Phase 6) ────────────────────────────────────────────────
+
+app.post('/api/founders/memory/reset-relationships', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.status(404).json({ error: 'No venture found' });
+
+    // Reset all prospect statuses back to 'new', clear interactions
+    await db.run(
+      "UPDATE prospects SET outreach_status = 'new', interactions = '[]', next_follow_up_date = NULL, follow_up_count = 0, last_response_sentiment = NULL, updated_at = ? WHERE venture_id = ?",
+      [Date.now(), venture.id]
+    );
+
+    await db.run(
+      `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'memory_reset', 'Relationship memory reset — all prospect statuses cleared', ?)`,
+      [require('uuid').v4(), venture.id, Date.now()]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Credit Checkout via Stripe (Phase 7) ──────────────────────────────────
+
+app.post('/api/founders/credit-checkout', authenticateFounder, async (req, res) => {
+  try {
+    const { amountCents } = req.body;
+    if (!amountCents || amountCents < 2500) return res.status(400).json({ error: 'Minimum $25' });
+
+    const founder = (await db.query('SELECT email FROM founders WHERE id = ?', [req.founder.founderId]))[0];
+    if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const result = await stripeIntegration.createCreditCheckout({
+      founderId: req.founder.founderId,
+      amountCents,
+      email: founder.email,
+      baseUrl
+    });
+
+    res.json({ success: true, url: result.url, sessionId: result.sessionId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Credit Transactions History ───────────────────────────────────────────
+
+app.get('/api/founders/credit-history', authenticateFounder, async (req, res) => {
+  try {
+    const transactions = await db.query(
+      'SELECT * FROM credit_transactions WHERE founder_id = ? ORDER BY created_at DESC LIMIT 50',
+      [req.founder.founderId]
+    );
+    res.json({ transactions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Revenue Events List ───────────────────────────────────────────────────
+
+app.get('/api/founders/revenue-events', authenticateFounder, async (req, res) => {
+  try {
+    const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [req.founder.founderId]))[0];
+    if (!venture) return res.json({ events: [] });
+
+    const events = await db.query(
+      `SELECT r.*, p.name as prospect_name, p.company as prospect_company
+       FROM revenue_events r LEFT JOIN prospects p ON r.prospect_id = p.id
+       WHERE r.venture_id = ? ORDER BY r.created_at DESC`,
+      [venture.id]
+    );
+    res.json({ events });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── Execution Mode Toggle (Phase 8) ──────────────────────────────────────
+
+app.post('/api/founders/settings', authenticateFounder, async (req, res) => {
+  try {
+    const { autonomyMode, monthlySpendCeilingCents } = req.body;
+    const founderId = req.founder.founderId;
+    const founder = (await db.query('SELECT * FROM founders WHERE id = ?', [founderId]))[0];
+    if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
+    const updates = [];
+    const params = [];
+
+    if (autonomyMode) {
+      // Accelerate mode requires 14+ days on platform
+      if (autonomyMode === 'accelerate') {
+        const daysSinceCreation = (Date.now() - founder.created_at) / (1000 * 60 * 60 * 24);
+        if (daysSinceCreation < 14) {
+          return res.status(400).json({ error: `Accelerate mode unlocks after 14 days. You have ${Math.floor(daysSinceCreation)} days so far.` });
+        }
+      }
+      updates.push('autonomy_mode = ?');
+      params.push(autonomyMode);
+    }
+
+    if (monthlySpendCeilingCents !== undefined) {
+      updates.push('monthly_spend_ceiling_cents = ?');
+      params.push(monthlySpendCeilingCents);
+    }
+
+    if (updates.length) {
+      params.push(founderId);
+      await db.run(`UPDATE founders SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    // Update venture daily limits based on mode
+    if (autonomyMode) {
+      const venture = (await db.query('SELECT id FROM founder_ventures WHERE founder_id = ?', [founderId]))[0];
+      if (venture) {
+        const newLimit = autonomyMode === 'accelerate' ? 100 : (founder.domain_warmup_confirmed ? 25 : 10);
+        await db.run('UPDATE founder_ventures SET daily_email_limit = ? WHERE id = ?', [newLimit, venture.id]);
+
+        await db.run(
+          `INSERT INTO activity_log (id, venture_id, event_type, message, created_at) VALUES (?, ?, 'mode_change', ?, ?)`,
+          [require('uuid').v4(), venture.id,
+           `Execution mode changed to ${autonomyMode}. Daily email limit: ${newLimit}.`,
+           Date.now()]
+        );
+      }
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/founders/settings', authenticateFounder, async (req, res) => {
+  try {
+    const founder = (await db.query(
+      'SELECT autonomy_mode, monthly_spend_ceiling_cents, domain_warmup_confirmed, created_at FROM founders WHERE id = ?',
+      [req.founder.founderId]
+    ))[0];
+    if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
+    const daysSinceCreation = (Date.now() - founder.created_at) / (1000 * 60 * 60 * 24);
+    res.json({
+      autonomy_mode: founder.autonomy_mode,
+      monthly_spend_ceiling_cents: founder.monthly_spend_ceiling_cents,
+      domain_warmup_confirmed: !!founder.domain_warmup_confirmed,
+      days_on_platform: Math.floor(daysSinceCreation),
+      accelerate_unlocked: daysSinceCreation >= 14
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // BOTXCHANGE PIVOT: Server-rendered pages
 // ============================================================================
@@ -6089,7 +6247,6 @@ app.get('/app/dashboard', (req, res) => {
       .status-paused{background:#ff4d6a20;color:var(--accent-red);border:1px solid #ff4d6a40;}
       .dash-top-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
       .credit-display{font-family:var(--font-mono);font-size:14px;color:var(--accent-green);}
-      .spend-display{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);}
 
       .stats-bar{grid-column:1/-1;display:flex;gap:0;border-bottom:1px solid var(--border);}
       .stat-item{flex:1;text-align:center;padding:14px;border-right:1px solid var(--border);}
@@ -6129,10 +6286,55 @@ app.get('/app/dashboard', (req, res) => {
       .approval-bar.show{display:flex;}
       .approval-count{font-weight:700;color:var(--accent-amber);}
 
+      .tab-bar{grid-column:1/-1;display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg-card);}
+      .tab-btn{padding:10px 20px;font-size:12px;font-weight:600;color:var(--text-muted);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-family:var(--font-display);transition:all 0.2s;}
+      .tab-btn:hover{color:var(--text-secondary);}
+      .tab-btn.active{color:var(--accent-green);border-bottom-color:var(--accent-green);}
+
+      .tab-content{display:none;}
+      .tab-content.active{display:grid;grid-template-columns:280px 1fr 340px;}
+
+      .memory-item{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:8px;}
+      .memory-layer{font-size:10px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;margin-bottom:4px;}
+      .memory-layer.vision{color:var(--accent-purple);}
+      .memory-layer.execution{color:var(--accent-blue);}
+      .memory-layer.performance{color:var(--accent-green);}
+      .memory-layer.relationship{color:var(--accent-amber);}
+      .memory-key{font-weight:700;font-size:13px;margin-bottom:4px;}
+      .memory-value{font-size:12px;color:var(--text-secondary);word-break:break-word;}
+
+      .prospect-row{display:grid;grid-template-columns:1fr 120px 100px 80px;gap:8px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;align-items:center;}
+      .prospect-name{font-weight:600;}
+      .prospect-company{color:var(--text-secondary);}
+      .prospect-status{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600;text-align:center;}
+
+      .settings-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:16px;}
+      .settings-card h4{font-size:14px;font-weight:700;margin-bottom:12px;}
+
+      .mode-option{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:all 0.2s;}
+      .mode-option:hover{border-color:var(--accent-blue);}
+      .mode-option.selected{border-color:var(--accent-green);background:#00f0a008;}
+      .mode-option .mode-radio{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);}
+      .mode-option.selected .mode-radio{border-color:var(--accent-green);background:var(--accent-green);}
+      .mode-label{font-weight:600;font-size:13px;}
+      .mode-desc{font-size:11px;color:var(--text-muted);margin-top:2px;}
+
+      .credit-options{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}
+      .credit-opt{text-align:center;padding:14px;background:#0a0a0f;border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all 0.2s;}
+      .credit-opt:hover{border-color:var(--accent-green);}
+      .credit-opt.selected{border-color:var(--accent-green);background:#00f0a008;}
+      .credit-opt .amount{font-family:var(--font-mono);font-size:18px;font-weight:700;}
+
       .empty-state{text-align:center;padding:60px 20px;color:var(--text-muted);}
       .empty-state h3{font-size:18px;margin-bottom:8px;color:var(--text-secondary);}
 
-      @media(max-width:1024px){.dash-layout{grid-template-columns:1fr;}.panel-left{max-height:none;border-right:none;border-bottom:1px solid var(--border);}.panel-right{border-left:none;border-top:1px solid var(--border);max-height:none;}.panel-center{max-height:none;}}
+      @media(max-width:1024px){
+        .dash-layout,.tab-content.active{grid-template-columns:1fr;}
+        .panel-left{max-height:none;border-right:none;border-bottom:1px solid var(--border);}
+        .panel-right{border-left:none;border-top:1px solid var(--border);max-height:none;}
+        .panel-center{max-height:none;}
+        .credit-options{grid-template-columns:repeat(2,1fr);}
+      }
     </style></head><body>
     ${PIVOT_NAV}
     <div id="app"></div>
@@ -6142,6 +6344,10 @@ app.get('/app/dashboard', (req, res) => {
 
       const app = document.getElementById('app');
       let dashData = null;
+      let memoryData = null;
+      let settingsData = null;
+      let prospectData = null;
+      let currentTab = 'activity';
       let refreshInterval = null;
 
       async function loadDashboard() {
@@ -6168,30 +6374,32 @@ app.get('/app/dashboard', (req, res) => {
 
         const agentColors = {research:'var(--accent-blue)',messaging:'var(--accent-purple)',quality:'var(--accent-amber)',outreach:'var(--accent-green)',ops:'var(--text-primary)'};
 
-        app.innerHTML = '<div class="dash-layout">'
-          // Top bar
-          + '<div class="dash-top">'
+        const topBar = '<div class="dash-top">'
           + '<div class="venture-name">' + esc(v.name) + ' <span class="status-badge ' + (isPaused ? 'status-paused' : 'status-active') + '">' + (isPaused ? 'Paused' : 'Active') + '</span></div>'
           + '<div class="dash-top-right">'
-          + '<div><div class="credit-display">$' + (f.credit_balance_cents / 100).toFixed(2) + ' credits</div></div>'
-          + '<button class="btn-small btn-primary" onclick="addCredits()">Add Credits</button>'
+          + '<div class="credit-display">$' + (f.credit_balance_cents / 100).toFixed(2) + ' credits</div>'
+          + '<button class="btn-small btn-primary" onclick="showTab(\\'credits\\')">Add Credits</button>'
           + '<button class="' + (isPaused ? 'btn-small btn-primary' : 'btn-small btn-danger') + '" onclick="toggleKillSwitch()">' + (isPaused ? 'Resume' : 'Pause Everything') + '</button>'
-          + '</div></div>'
+          + '</div></div>';
 
-          // Approval bar
-          + '<div class="approval-bar ' + (approvals.length ? 'show' : '') + '"><div><span class="approval-count">' + approvals.length + ' items</span> awaiting your approval</div><div><button class="btn-small btn-primary" onclick="approveAll()">Approve All</button></div></div>'
+        const approvalBar = '<div class="approval-bar ' + (approvals.length ? 'show' : '') + '"><div><span class="approval-count">' + approvals.length + ' items</span> awaiting your approval</div><div><button class="btn-small btn-primary" onclick="approveAll()">Approve All</button></div></div>';
 
-          // Stats bar
-          + '<div class="stats-bar">'
+        const statsBar = '<div class="stats-bar">'
           + '<div class="stat-item"><div class="num" style="color:var(--accent-blue)">' + (v.total_prospects_found||0) + '</div><div class="lbl">Prospects</div></div>'
           + '<div class="stat-item"><div class="num" style="color:var(--accent-purple)">' + (v.total_emails_sent||0) + '</div><div class="lbl">Emails Sent</div></div>'
           + '<div class="stat-item"><div class="num" style="color:var(--accent-green)">' + (v.total_replies||0) + '</div><div class="lbl">Replies</div></div>'
           + '<div class="stat-item"><div class="num" style="color:var(--accent-amber)">' + (v.total_meetings_booked||0) + '</div><div class="lbl">Meetings</div></div>'
           + '<div class="stat-item"><div class="num" style="color:var(--accent-green)">$' + ((v.total_revenue_cents||0)/100).toFixed(0) + '</div><div class="lbl">Revenue</div></div>'
-          + '</div>'
+          + '</div>';
 
-          // Left panel: agents
-          + '<div class="panel-left"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Your Team</h3>'
+        const tabs = '<div class="tab-bar">'
+          + ['activity','memory','prospects','credits','settings'].map(t =>
+              '<button class="tab-btn ' + (currentTab===t?'active':'') + '" onclick="showTab(\\'' + t + '\\')">' + t.charAt(0).toUpperCase()+t.slice(1) + '</button>'
+            ).join('')
+          + '</div>';
+
+        // Left panel: agents (shared across tabs)
+        const leftPanel = '<div class="panel-left"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Your Team</h3>'
           + agents.map(a => '<div class="agent-card">'
             + '<div class="agent-header"><span class="agent-name" style="color:' + (agentColors[a.role]||'inherit') + '">' + esc(a.display_name) + '</span>'
             + '<span class="agent-status ' + a.status + '">' + a.status.replace('_',' ') + '</span></div>'
@@ -6200,20 +6408,80 @@ app.get('/app/dashboard', (req, res) => {
             + '</div>').join('')
           + '<button class="btn-primary btn-small" style="width:100%;justify-content:center;margin-top:12px;" onclick="runResearch()">Run Research Cycle</button>'
           + '<button class="btn-secondary btn-small" style="width:100%;justify-content:center;margin-top:8px;" onclick="runDaily()">Run Full Pipeline</button>'
-          + '</div>'
-
-          // Center panel: activity feed
-          + '<div class="panel-center"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Activity Feed</h3>'
-          + (activities.length ? activities.map(a => '<div class="feed-item" onclick="showEvidence(\\'' + (a.task_id || '') + '\\')">'
-            + '<div style="display:flex;justify-content:space-between;"><span class="feed-agent">' + esc(a.agent_id ? agents.find(ag=>ag.id===a.agent_id)?.display_name||'System' : 'System') + '</span>'
-            + '<span class="feed-time">' + timeAgo(a.created_at) + '</span></div>'
-            + '<div class="feed-msg">' + esc(a.message) + '</div>'
-            + '</div>').join('') : '<div class="empty-state"><h3>No Activity Yet</h3><p>Run a research cycle to get started</p></div>')
-          + '</div>'
-
-          // Right panel: evidence drawer
-          + '<div class="panel-right" id="evidencePanel"><div class="evidence-title"><span>Evidence</span><button onclick="closeEvidence()" style="background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">&times;</button></div><div id="evidenceContent"></div></div>'
           + '</div>';
+
+        const rightPanel = '<div class="panel-right" id="evidencePanel"><div class="evidence-title"><span>Evidence</span><button onclick="closeEvidence()" style="background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">&times;</button></div><div id="evidenceContent"></div></div>';
+
+        // Center panels per tab
+        let centerContent = '';
+
+        if (currentTab === 'activity') {
+          centerContent = '<div class="panel-center"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Activity Feed</h3>'
+            + (activities.length ? activities.map(a => '<div class="feed-item" onclick="showEvidence(\\'' + (a.task_id || '') + '\\')">'
+              + '<div style="display:flex;justify-content:space-between;"><span class="feed-agent">' + esc(a.agent_id ? agents.find(ag=>ag.id===a.agent_id)?.display_name||'System' : 'System') + '</span>'
+              + '<span class="feed-time">' + timeAgo(a.created_at) + '</span></div>'
+              + '<div class="feed-msg">' + esc(a.message) + '</div>'
+              + '</div>').join('') : '<div class="empty-state"><h3>No Activity Yet</h3><p>Run a research cycle to get started</p></div>')
+            + '</div>';
+        } else if (currentTab === 'memory') {
+          centerContent = '<div class="panel-center" style="grid-column:2/-1;"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Venture Memory</h3>'
+            + '<div id="memoryList"><p style="color:var(--text-muted)">Loading memory...</p></div>'
+            + '<div style="margin-top:16px;display:flex;gap:8px;">'
+            + '<button class="btn-secondary btn-small" onclick="resetRelationships()" style="color:var(--accent-red);border-color:var(--accent-red);">Reset Relationship Memory</button>'
+            + '</div></div>';
+        } else if (currentTab === 'prospects') {
+          centerContent = '<div class="panel-center" style="grid-column:2/-1;"><h3 style="font-size:14px;font-weight:700;margin-bottom:12px;">Prospects</h3>'
+            + '<div id="prospectList"><p style="color:var(--text-muted)">Loading prospects...</p></div></div>';
+        } else if (currentTab === 'credits') {
+          centerContent = '<div class="panel-center" style="grid-column:2/-1;">'
+            + '<div class="settings-card"><h4>Add Credits</h4>'
+            + '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Credits cover AI processing costs. You only pay for what your team uses.</p>'
+            + '<div class="credit-options">'
+            + [2500,5000,10000,25000].map(c => '<div class="credit-opt" onclick="selectCredit('+c+',this)"><div class="amount">$'+(c/100)+'</div></div>').join('')
+            + '</div>'
+            + '<button class="btn-primary" style="width:100%;justify-content:center;" onclick="purchaseCredits()" id="purchaseBtn">Purchase Credits</button>'
+            + '<p style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:center;">Secure payment via Stripe</p>'
+            + '</div>'
+            + '<div class="settings-card"><h4>Credit Balance</h4>'
+            + '<div style="font-family:var(--font-mono);font-size:28px;font-weight:700;color:var(--accent-green);margin-bottom:8px;">$' + (f.credit_balance_cents/100).toFixed(2) + '</div>'
+            + '<div style="font-size:12px;color:var(--text-muted);">Total purchased: $' + ((f.total_credits_purchased_cents||0)/100).toFixed(2) + '</div>'
+            + '<div style="font-size:12px;color:var(--text-muted);">Ceiling: $' + (f.monthly_spend_ceiling_cents/100).toFixed(0) + '/month</div>'
+            + '</div>'
+            + '<div class="settings-card"><h4>Record Revenue</h4>'
+            + '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Closed a deal from outreach? Record it here. Platform takes 5%.</p>'
+            + '<div class="form-group"><label>Amount ($)</label><input id="revAmount" type="number" min="1" placeholder="1000"></div>'
+            + '<button class="btn-primary btn-small" onclick="recordRevenue()">Record Revenue</button>'
+            + '</div></div>';
+        } else if (currentTab === 'settings') {
+          const s = settingsData || {};
+          centerContent = '<div class="panel-center" style="grid-column:2/-1;">'
+            + '<div class="settings-card"><h4>Execution Mode</h4>'
+            + '<div class="mode-option ' + (s.autonomy_mode==='bootstrap'?'selected':'') + '" onclick="setMode(\\'bootstrap\\')">'
+            + '<div class="mode-radio"></div><div><div class="mode-label">Bootstrap Mode</div><div class="mode-desc">Human approval required before every email is sent. Max ' + (s.domain_warmup_confirmed?25:10) + ' emails/day. Quality agent reviews all drafts.</div></div></div>'
+            + '<div class="mode-option ' + (s.autonomy_mode==='accelerate'?'selected':'') + '" onclick="setMode(\\'accelerate\\')">'
+            + '<div class="mode-radio"></div><div><div class="mode-label">Accelerate Mode' + (s.accelerate_unlocked?'':' (locked)') + '</div><div class="mode-desc">' + (s.accelerate_unlocked ? 'Only flagged items need approval. Max 100 emails/day. Quality agent samples 20%.' : 'Unlocks after 14 days on platform. You have ' + (s.days_on_platform||0) + ' days.') + '</div></div></div>'
+            + '</div>'
+            + '<div class="settings-card"><h4>Monthly Spend Ceiling</h4>'
+            + '<div style="display:flex;align-items:center;gap:12px;">'
+            + '<input type="range" id="ceilingSlider" min="50" max="1000" value="' + ((s.monthly_spend_ceiling_cents||20000)/100) + '" style="flex:1;" oninput="document.getElementById(\\'ceilDisplay\\').textContent=\\'$\\'+this.value">'
+            + '<span id="ceilDisplay" style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--accent-green);min-width:60px;">$' + ((s.monthly_spend_ceiling_cents||20000)/100) + '</span>'
+            + '</div>'
+            + '<button class="btn-primary btn-small" style="margin-top:12px;" onclick="saveCeiling()">Save Ceiling</button>'
+            + '</div>'
+            + '<div class="settings-card"><h4>Account</h4>'
+            + '<p style="font-size:13px;color:var(--text-secondary);">' + esc(dashData.founder.email) + '</p>'
+            + '<p style="font-size:12px;color:var(--text-muted);margin-top:4px;">Member for ' + (s.days_on_platform||0) + ' days</p>'
+            + '<button class="btn-secondary btn-small" style="margin-top:12px;color:var(--text-muted);" onclick="localStorage.removeItem(\\'bx_token\\');localStorage.removeItem(\\'bx_founder\\');window.location.href=\\'/app/login\\';">Log Out</button>'
+            + '</div></div>';
+        }
+
+        app.innerHTML = topBar + approvalBar + statsBar + tabs
+          + '<div class="dash-layout">' + leftPanel + centerContent + (currentTab==='activity'?rightPanel:'') + '</div>';
+
+        // Load tab-specific data
+        if (currentTab === 'memory' && !memoryData) loadMemory();
+        if (currentTab === 'prospects' && !prospectData) loadProspects();
+        if (currentTab === 'settings' && !settingsData) loadSettings();
       }
 
       function esc(s) { if(!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -6227,6 +6495,11 @@ app.get('/app/dashboard', (req, res) => {
         return Math.floor(d/86400000) + 'd ago';
       }
 
+      function showTab(tab) {
+        currentTab = tab;
+        render();
+      }
+
       async function toggleKillSwitch() {
         const active = !dashData.venture.kill_switch_active;
         await fetch('/api/founders/kill-switch', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({active}) });
@@ -6238,19 +6511,131 @@ app.get('/app/dashboard', (req, res) => {
         loadDashboard();
       }
 
-      async function addCredits() {
-        const amount = prompt('How many dollars of credits to add? (min $25)', '50');
-        if (!amount) return;
-        const cents = Math.round(parseFloat(amount) * 100);
-        if (cents < 2500) { alert('Minimum $25'); return; }
-        await fetch('/api/founders/add-credits', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({amountCents:cents}) });
+      // ── Memory ──────────────────────────────────────────
+      async function loadMemory() {
+        try {
+          const res = await fetch('/api/founders/memory', { headers:{'Authorization':'Bearer '+token} });
+          memoryData = await res.json();
+          const el = document.getElementById('memoryList');
+          if (!el) return;
+          const mem = memoryData.memory || [];
+          if (!mem.length) { el.innerHTML = '<div class="empty-state"><p>No memory entries yet. Run a cycle to populate.</p></div>'; return; }
+
+          el.innerHTML = mem.map(m => '<div class="memory-item">'
+            + '<div class="memory-layer ' + m.layer + '">' + m.layer + '</div>'
+            + '<div class="memory-key">' + esc(m.key) + '</div>'
+            + '<div class="memory-value">' + esc(m.value.substring(0,200)) + (m.value.length>200?'...':'') + '</div>'
+            + (m.writable_by === 'founder' ? '<button class="btn-small btn-secondary" style="margin-top:8px;font-size:10px;" onclick="editMemory(\\'' + m.id + '\\',\\'' + esc(m.key) + '\\')">Edit</button>' : '')
+            + '</div>').join('');
+        } catch(e) {}
+      }
+
+      async function editMemory(memId, key) {
+        const val = prompt('Edit memory: ' + key);
+        if (val === null) return;
+        await fetch('/api/founders/memory/' + memId, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({value:val}) });
+        memoryData = null;
+        loadMemory();
+      }
+
+      async function resetRelationships() {
+        if (!confirm('Reset all relationship memory? This clears prospect statuses and interactions. Prospect records remain.')) return;
+        await fetch('/api/founders/memory/reset-relationships', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+        alert('Relationship memory reset.');
         loadDashboard();
       }
 
+      // ── Prospects ───────────────────────────────────────
+      async function loadProspects() {
+        try {
+          const res = await fetch('/api/founders/prospects', { headers:{'Authorization':'Bearer '+token} });
+          prospectData = await res.json();
+          const el = document.getElementById('prospectList');
+          if (!el) return;
+          const prospects = prospectData.prospects || [];
+          if (!prospects.length) { el.innerHTML = '<div class="empty-state"><p>No prospects yet. Run a research cycle.</p></div>'; return; }
+
+          const statusColors = {new:'var(--text-muted)',contacted:'var(--accent-blue)',replied:'var(--accent-green)',meeting_booked:'var(--accent-amber)',closed_won:'var(--accent-green)',closed_lost:'var(--accent-red)',unresponsive:'var(--text-muted)',opted_out:'var(--accent-red)'};
+
+          el.innerHTML = '<div class="prospect-row" style="font-weight:600;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:0.8px;background:none;border:none;"><span>Name</span><span>Company</span><span>Status</span><span>Score</span></div>'
+            + prospects.map(p => '<div class="prospect-row">'
+              + '<div><span class="prospect-name">' + esc(p.name||'Unknown') + '</span><br><span style="font-size:11px;color:var(--text-muted);">' + esc(p.title||'') + '</span></div>'
+              + '<div class="prospect-company">' + esc(p.company||'') + '</div>'
+              + '<div><span class="prospect-status" style="color:' + (statusColors[p.outreach_status]||'inherit') + ';background:' + (statusColors[p.outreach_status]||'inherit') + '15">' + (p.outreach_status||'new') + '</span></div>'
+              + '<div style="font-family:var(--font-mono);color:var(--accent-green);">' + ((p.icp_confidence_score||0)*100).toFixed(0) + '%</div>'
+              + '</div>').join('');
+        } catch(e) {}
+      }
+
+      // ── Credits ─────────────────────────────────────────
+      let selectedCreditAmount = 5000;
+
+      function selectCredit(cents, el) {
+        selectedCreditAmount = cents;
+        document.querySelectorAll('.credit-opt').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
+      }
+
+      async function purchaseCredits() {
+        const btn = document.getElementById('purchaseBtn');
+        btn.disabled = true; btn.textContent = 'Redirecting to Stripe...';
+        try {
+          const res = await fetch('/api/founders/credit-checkout', {
+            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body:JSON.stringify({amountCents: selectedCreditAmount})
+          });
+          const data = await res.json();
+          if (data.url) {
+            window.location.href = data.url;
+          } else {
+            alert(data.error || 'Could not create checkout');
+            btn.disabled = false; btn.textContent = 'Purchase Credits';
+          }
+        } catch(e) { alert('Error: ' + e.message); btn.disabled = false; btn.textContent = 'Purchase Credits'; }
+      }
+
+      async function recordRevenue() {
+        const amount = parseFloat(document.getElementById('revAmount')?.value);
+        if (!amount || amount < 1) { alert('Enter a valid amount'); return; }
+        const cents = Math.round(amount * 100);
+        await fetch('/api/founders/revenue', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({amountCents:cents}) });
+        alert('Revenue recorded! Platform take: $' + (cents * 0.05 / 100).toFixed(2));
+        loadDashboard();
+      }
+
+      // ── Settings ────────────────────────────────────────
+      async function loadSettings() {
+        try {
+          const res = await fetch('/api/founders/settings', { headers:{'Authorization':'Bearer '+token} });
+          settingsData = await res.json();
+          render();
+        } catch(e) {}
+      }
+
+      async function setMode(mode) {
+        try {
+          const res = await fetch('/api/founders/settings', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({autonomyMode:mode}) });
+          const data = await res.json();
+          if (data.error) { alert(data.error); return; }
+          settingsData = null;
+          loadSettings();
+        } catch(e) { alert('Error: ' + e.message); }
+      }
+
+      async function saveCeiling() {
+        const val = parseInt(document.getElementById('ceilingSlider')?.value || '200');
+        await fetch('/api/founders/settings', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body:JSON.stringify({monthlySpendCeilingCents: val * 100}) });
+        alert('Ceiling updated to $' + val + '/month');
+        settingsData = null;
+        loadDashboard();
+      }
+
+      // ── Evidence ────────────────────────────────────────
       async function showEvidence(taskId) {
         if (!taskId) return;
         const panel = document.getElementById('evidencePanel');
         const content = document.getElementById('evidenceContent');
+        if (!panel || !content) return;
         panel.classList.add('open');
         content.innerHTML = '<p style="color:var(--text-muted)">Loading...</p>';
         try {
@@ -6264,13 +6649,15 @@ app.get('/app/dashboard', (req, res) => {
         } catch(e) { content.innerHTML = '<p style="color:var(--accent-red)">Error loading evidence</p>'; }
       }
 
-      function closeEvidence() { document.getElementById('evidencePanel').classList.remove('open'); }
+      function closeEvidence() { const p = document.getElementById('evidencePanel'); if(p) p.classList.remove('open'); }
 
+      // ── Agent Actions ───────────────────────────────────
       async function runResearch() {
         const btn = event.target;
         btn.disabled = true; btn.textContent = 'Researching...';
         try {
           await fetch('/api/founders/run-research', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+          prospectData = null;
           loadDashboard();
         } catch(e) { alert('Error: ' + e.message); }
         btn.disabled = false; btn.textContent = 'Run Research Cycle';
@@ -6281,12 +6668,21 @@ app.get('/app/dashboard', (req, res) => {
         btn.disabled = true; btn.textContent = 'Running...';
         try {
           await fetch('/api/founders/run-daily', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+          prospectData = null;
+          memoryData = null;
           loadDashboard();
         } catch(e) { alert('Error: ' + e.message); }
         btn.disabled = false; btn.textContent = 'Run Full Pipeline';
       }
 
-      // Initial load + auto-refresh
+      // ── Init ────────────────────────────────────────────
+      // Check for Stripe redirect
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('credits') === 'success') {
+        currentTab = 'credits';
+        history.replaceState({}, '', '/app/dashboard');
+      }
+
       loadDashboard();
       refreshInterval = setInterval(loadDashboard, 30000);
     </script></body></html>`);
